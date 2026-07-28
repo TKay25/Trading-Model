@@ -168,7 +168,12 @@ class PatternRecognizer {
             const c2 = candles[i - 1];
             const c3 = candles[i];
 
-            // Bullish Engulfing
+            const body = Math.abs(c3.close - c3.open);
+            const totalRange = c3.high - c3.low;
+            if (totalRange === 0) continue;
+            const bodyRatio = body / totalRange;
+
+            // Bullish Engulfing — only when real body is significant
             if (this._isBullishEngulfing(c1, c2, c3)) {
                 patterns.push({
                     index: i,
@@ -177,6 +182,7 @@ class PatternRecognizer {
                     strength: 'strong',
                     timestamp: c3.epoch,
                 });
+                continue; // skip other checks on same candle
             }
 
             // Bearish Engulfing
@@ -188,10 +194,28 @@ class PatternRecognizer {
                     strength: 'strong',
                     timestamp: c3.epoch,
                 });
+                continue;
             }
 
-            // Hammer (bullish reversal)
-            if (this._isHammer(c3)) {
+            // Skip tiny-range candles — not enough price action
+            if (bodyRatio > 0.6) continue; // too much body, no significant wick
+
+            const upperWick = c3.high - Math.max(c3.open, c3.close);
+            const lowerWick = Math.min(c3.open, c3.close) - c3.low;
+            const wickRatio = Math.max(upperWick, lowerWick) / totalRange;
+
+            // Need a prominent wick (at least 55% of total range)
+            if (wickRatio < 0.55) continue;
+
+            // Need wick at least 3x the body
+            const dominantWick = Math.max(upperWick, lowerWick);
+            if (dominantWick < body * 3) continue;
+
+            // Also check recent direction context (last 3 candles)
+            const trendUp = i >= 3 && candles[i - 1].close > candles[i - 3].close;
+            const trendDown = i >= 3 && candles[i - 1].close < candles[i - 3].close;
+
+            if (lowerWick > upperWick && lowerWick > body * 3 && (trendDown || i < 3)) {
                 patterns.push({
                     index: i,
                     type: 'hammer',
@@ -199,26 +223,11 @@ class PatternRecognizer {
                     strength: 'medium',
                     timestamp: c3.epoch,
                 });
-            }
-
-            // Shooting Star (bearish reversal)
-            if (this._isShootingStar(c3)) {
+            } else if (upperWick > lowerWick && upperWick > body * 3 && (trendUp || i < 3)) {
                 patterns.push({
                     index: i,
                     type: 'shooting_star',
                     direction: 'bearish',
-                    strength: 'medium',
-                    timestamp: c3.epoch,
-                });
-            }
-
-            // Pin Bar detection
-            const pinBar = this._detectPinBar(c3);
-            if (pinBar) {
-                patterns.push({
-                    index: i,
-                    type: pinBar.type,
-                    direction: pinBar.direction,
                     strength: 'medium',
                     timestamp: c3.epoch,
                 });
@@ -229,7 +238,10 @@ class PatternRecognizer {
     }
 
     _isBullishEngulfing(c1, c2, c3) {
+        const body2 = Math.abs(c2.close - c2.open);
+        const body3 = Math.abs(c3.close - c3.open);
         return (
+            body2 > 0 && body3 > 0 &&
             c2.close < c2.open &&               // C2 is bearish
             c3.close > c3.open &&               // C3 is bullish
             c3.open < c2.close &&               // Opens below prev close
@@ -238,50 +250,14 @@ class PatternRecognizer {
     }
 
     _isBearishEngulfing(c1, c2, c3) {
+        const body2 = Math.abs(c2.close - c2.open);
+        const body3 = Math.abs(c3.close - c3.open);
         return (
+            body2 > 0 && body3 > 0 &&
             c2.close > c2.open &&               // C2 is bullish
             c3.close < c3.open &&               // C3 is bearish
             c3.open > c2.close &&               // Opens above prev close
             c3.close < c2.open                  // Closes below prev open
         );
-    }
-
-    _isHammer(candle) {
-        const body = Math.abs(candle.close - candle.open);
-        const totalRange = candle.high - candle.low;
-        if (totalRange === 0 || body / totalRange > 0.3) return false;
-
-        const lowerWick = Math.min(candle.open, candle.close) - candle.low;
-        const upperWick = candle.high - Math.max(candle.open, candle.close);
-
-        return lowerWick > body * 2 && lowerWick > upperWick;
-    }
-
-    _isShootingStar(candle) {
-        const body = Math.abs(candle.close - candle.open);
-        const totalRange = candle.high - candle.low;
-        if (totalRange === 0 || body / totalRange > 0.3) return false;
-
-        const lowerWick = Math.min(candle.open, candle.close) - candle.low;
-        const upperWick = candle.high - Math.max(candle.open, candle.close);
-
-        return upperWick > body * 2 && upperWick > lowerWick;
-    }
-
-    _detectPinBar(candle) {
-        const body = Math.abs(candle.close - candle.open);
-        const totalRange = candle.high - candle.low;
-        if (totalRange === 0 || body / totalRange > 0.3) return null;
-
-        const upperWick = candle.high - Math.max(candle.open, candle.close);
-        const lowerWick = Math.min(candle.open, candle.close) - candle.low;
-
-        if (lowerWick > body * 2 && lowerWick > upperWick) {
-            return { type: 'pin_bar_bullish', direction: 'bullish' };
-        }
-        if (upperWick > body * 2 && upperWick > lowerWick) {
-            return { type: 'pin_bar_bearish', direction: 'bearish' };
-        }
-        return null;
     }
 }

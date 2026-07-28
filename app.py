@@ -224,13 +224,13 @@ def _serialize_analysis(analysis: dict) -> dict:
 
 @app.route("/api/trade", methods=["POST"])
 def place_trade():
-    """Place a trade on Deriv."""
+    """Open a position on Deriv Volatility Indices."""
     data = request.get_json()
     symbol = data.get("symbol", Config.DEFAULT_SYMBOL)
-    amount = data.get("amount", 1.0)
-    contract_type = data.get("contract_type", "CALL")
-    duration = data.get("duration", 1)
-    duration_unit = data.get("duration_unit", "m")
+    lot_size = data.get("lot_size", 0.10)
+    direction = data.get("direction", "BUY")  # BUY (CALL) or SELL (PUT)
+    stop_loss = data.get("stop_loss", 0)
+    take_profit = data.get("take_profit", 0)
 
     if not Config.DERIV_API_TOKEN:
         return jsonify({
@@ -238,12 +238,16 @@ def place_trade():
             "error": "No Deriv API token configured. Set DERIV_API_TOKEN in .env"
         }), 400
 
+    # Map lot_size to stake amount and direction to contract type
+    amount = lot_size  # lot size maps directly to stake for volatility indices
+    contract_type = "CALL" if direction == "BUY" else "PUT"
+
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(deriv_api.connect())
         result = loop.run_until_complete(
-            deriv_api.buy_contract(symbol, amount, contract_type, duration, duration_unit)
+            deriv_api.buy_contract(symbol, amount, contract_type, 1, "t")
         )
         loop.run_until_complete(deriv_api.close())
         loop.close()

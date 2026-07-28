@@ -20,28 +20,23 @@ class TradingDashboardApp {
         this.symbolSelect = document.getElementById('symbolSelect');
         this.timeframeBtns = document.querySelectorAll('.timeframe-btn');
         this.refreshBtn = document.getElementById('refreshChart');
-        this.drawTrendlineBtn = document.getElementById('drawTrendline');
-        this.drawFibBtn = document.getElementById('drawFib');
-        this.drawRectBtn = document.getElementById('drawRectangle');
-        this.clearDrawingsBtn = document.getElementById('clearDrawings');
-        this.patternList = document.getElementById('patternList');
-        this.patternCount = document.getElementById('patternCount');
         this.chartLoading = document.getElementById('chartLoading');
 
         // TDI display elements
         this.tdiRsi = document.getElementById('tdiRsi');
         this.tdiRsiSmoothed = document.getElementById('tdiRsiSmoothed');
         this.tdiMarketBase = document.getElementById('tdiMarketBase');
-        this.tdiUpperBand = document.getElementById('tdiUpperBand');
-        this.tdiLowerBand = document.getElementById('tdiLowerBand');
         this.tdiProgress = document.getElementById('tdiProgress');
+        this.tdiPatterns = document.getElementById('tdiPatterns');
+        this.tdiZone = document.getElementById('tdiZone');
 
-        // Signal display elements
+        // Decision display elements
         this.signalBody = document.getElementById('signalBody');
         this.noSignal = document.getElementById('noSignal');
         this.signalContent = document.getElementById('signalContent');
-        this.signalBadge = document.getElementById('signalBadge');
-        this.signalDetails = document.getElementById('signalDetails');
+        this.decisionBadge = document.getElementById('decisionBadge');
+        this.decisionSummary = document.getElementById('decisionSummary');
+        this.decisionReason = document.getElementById('decisionReason');
         this.signalCard = document.getElementById('signalCard');
 
         this._bindEvents();
@@ -75,47 +70,6 @@ class TradingDashboardApp {
             this._loadChartData();
             this._runAnalysis();
         });
-
-        // Drawing tools
-        this.drawTrendlineBtn.addEventListener('click', () => {
-            this._toggleDrawingTool('trendline', this.drawTrendlineBtn);
-        });
-
-        this.drawFibBtn.addEventListener('click', () => {
-            this._toggleDrawingTool('fib', this.drawFibBtn);
-        });
-
-        this.clearDrawingsBtn.addEventListener('click', () => {
-            this.chart.clearDrawings();
-            document.querySelectorAll('.drawing-tool-active').forEach(el => {
-                el.classList.remove('drawing-tool-active');
-            });
-            this.chart.setDrawingTool(null);
-        });
-
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                this.chart.setDrawingTool(null);
-                document.querySelectorAll('.drawing-tool-active').forEach(el => {
-                    el.classList.remove('drawing-tool-active');
-                });
-            }
-        });
-    }
-
-    _toggleDrawingTool(tool, button) {
-        if (button.classList.contains('drawing-tool-active')) {
-            button.classList.remove('drawing-tool-active');
-            this.chart.setDrawingTool(null);
-        } else {
-            // Deactivate other tools
-            document.querySelectorAll('.drawing-tool-active').forEach(el => {
-                el.classList.remove('drawing-tool-active');
-            });
-            button.classList.add('drawing-tool-active');
-            this.chart.setDrawingTool(tool);
-        }
     }
 
     /**
@@ -176,12 +130,13 @@ class TradingDashboardApp {
         let price = 100 + Math.random() * 50;
 
         for (let i = 200; i > 0; i--) {
-            const volatility = 0.5 + Math.random() * 0.8;
+            const volatility = 0.3 + Math.random() * 0.4;
             const change = (Math.random() - 0.48) * volatility;
             const open = price;
             const close = price + change;
-            const high = Math.max(open, close) + Math.random() * volatility * 0.5;
-            const low = Math.min(open, close) - Math.random() * volatility * 0.5;
+            const wick = Math.random() * volatility * 0.3;
+            const high = Math.max(open, close) + wick;
+            const low = Math.min(open, close) - wick;
             const volume = Math.random() * 1000 + 100;
 
             candles.push({
@@ -227,7 +182,9 @@ class TradingDashboardApp {
 
         // Pattern detection
         const patterns = this.patternRecognizer.detect(candles);
-        this._displayPatterns(patterns);
+        const bullishCount = patterns.filter(p => p.direction === 'bullish').length;
+        const bearishCount = patterns.filter(p => p.direction === 'bearish').length;
+        this.tdiPatterns.textContent = bullishCount + bearishCount;
 
         // Try server-side analysis for signals
         try {
@@ -244,20 +201,18 @@ class TradingDashboardApp {
             const data = await response.json();
             if (data.success && data.analysis) {
                 this._displaySignal(data.analysis.signal, data.analysis);
-
-                // Highlight patterns on chart
-                if (data.analysis.patterns) {
-                    data.analysis.patterns.forEach(p => {
-                        this.chart.highlightPattern(p.timestamp, p.type, p.direction);
-                    });
-                }
+                // Highlight only patterns that contributed
+                const signal = data.analysis.signal;
+                const recentPatterns = (data.analysis.patterns || [])
+                    .filter(p => p.index >= this.candles.length - 5);
+                recentPatterns.forEach(p => {
+                    this.chart.highlightPattern(p.timestamp, p.type, p.direction);
+                });
             } else {
-                // Client-side signal generation
                 const signal = this._generateClientSignal(tdiValues, patterns, candles);
                 this._displaySignal(signal, { tdi: tdiValues, patterns });
             }
         } catch (err) {
-            // Fallback to client-side signal
             const signal = this._generateClientSignal(tdiValues, patterns, candles);
             this._displaySignal(signal, { tdi: tdiValues, patterns });
         }
@@ -270,58 +225,23 @@ class TradingDashboardApp {
         this.tdiRsi.textContent = tdi.rsi ? tdi.rsi.toFixed(2) : '--';
         this.tdiRsiSmoothed.textContent = tdi.rsiSmoothed ? tdi.rsiSmoothed.toFixed(2) : '--';
         this.tdiMarketBase.textContent = tdi.marketBaseLine ? tdi.marketBaseLine.toFixed(2) : '--';
-        this.tdiUpperBand.textContent = tdi.upperBand ? tdi.upperBand.toFixed(2) : '--';
-        this.tdiLowerBand.textContent = tdi.lowerBand ? tdi.lowerBand.toFixed(2) : '--';
 
-        // Color code RSI
         if (tdi.rsi !== null) {
             this.tdiProgress.style.width = `${tdi.rsi}%`;
             if (tdi.rsi > 70) {
                 this.tdiProgress.className = 'progress-bar bg-danger';
                 this.tdiRsi.className = 'fw-bold text-danger';
+                this.tdiZone.textContent = 'Overbought';
             } else if (tdi.rsi < 30) {
                 this.tdiProgress.className = 'progress-bar bg-success';
                 this.tdiRsi.className = 'fw-bold text-success';
+                this.tdiZone.textContent = 'Oversold';
             } else {
-                this.tdiProgress.className = 'progress-bar bg-info';
-                this.tdiRsi.className = 'fw-bold text-info';
+                this.tdiProgress.className = 'progress-bar bg-primary';
+                this.tdiRsi.className = 'fw-bold';
+                this.tdiZone.textContent = 'Neutral';
             }
         }
-    }
-
-    /**
-     * Display detected patterns in the panel.
-     */
-    _displayPatterns(patterns) {
-        this.patternCount.textContent = `${patterns.length} patterns`;
-
-        if (patterns.length === 0) {
-            this.patternList.innerHTML = `
-                <div class="col-12 text-center text-secondary">
-                    <small>No reversal patterns detected</small>
-                </div>
-            `;
-            return;
-        }
-
-        let html = '';
-        patterns.forEach((p, i) => {
-            const badgeClass = p.direction === 'bullish' ? 'bg-success' : 'bg-danger';
-            const icon = p.direction === 'bullish' ? 'bi-arrow-up' : 'bi-arrow-down';
-            html += `
-                <div class="col-md-4 col-sm-6">
-                    <div class="border border-secondary rounded p-2 small">
-                        <span class="badge ${badgeClass} me-1">
-                            <i class="bi ${icon}"></i>
-                        </span>
-                        <span>${p.type.replace(/_/g, ' ').toUpperCase()}</span>
-                        <span class="badge bg-secondary ms-1">${p.strength}</span>
-                    </div>
-                </div>
-            `;
-        });
-
-        this.patternList.innerHTML = html;
     }
 
     /**

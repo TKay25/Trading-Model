@@ -131,87 +131,80 @@ class PatternRecognizer:
 
     @staticmethod
     def detect_reversal_patterns(candles: List[Candle]) -> List[Dict]:
-        """Detect common reversal patterns."""
+        """Detect common reversal patterns with strict criteria to avoid false positives."""
         patterns = []
-        if len(candles) < 3:
+        if len(candles) < 4:
             return patterns
 
         for i in range(2, len(candles)):
             c1, c2, c3 = candles[i - 2], candles[i - 1], candles[i]
 
-            # Bullish Engulfing
-            if (c2.close < c2.open and  # Bearish candle
-                c3.close > c3.open and  # Bullish candle
-                c3.open < c2.close and  # Opens below prev close
-                c3.close > c2.open):    # Closes above prev open
-                patterns.append({
-                    "index": i,
-                    "type": "bullish_engulfing",
-                    "direction": "bullish",
-                    "strength": "strong",
-                    "timestamp": c3.timestamp
-                })
-
-            # Bearish Engulfing
-            if (c2.close > c2.open and  # Bullish candle
-                c3.close < c3.open and  # Bearish candle
-                c3.open > c2.close and  # Opens above prev close
-                c3.close < c2.open):    # Closes below prev open
-                patterns.append({
-                    "index": i,
-                    "type": "bearish_engulfing",
-                    "direction": "bearish",
-                    "strength": "strong",
-                    "timestamp": c3.timestamp
-                })
-
-            # Doji (indecision - potential reversal)
-            body = abs(c3.close - c3.open)
-            range_candle = c3.high - c3.low
-            if range_candle > 0 and body / range_candle < 0.1:
-                upper_wick = c3.high - max(c3.open, c3.close)
-                lower_wick = min(c3.open, c3.close) - c3.low
-                if upper_wick > 2 * body and lower_wick < body:
-                    patterns.append({
-                        "index": i,
-                        "type": "shooting_star",
-                        "direction": "bearish",
-                        "strength": "medium",
-                        "timestamp": c3.timestamp
-                    })
-                elif lower_wick > 2 * body and upper_wick < body:
-                    patterns.append({
-                        "index": i,
-                        "type": "hammer",
-                        "direction": "bullish",
-                        "strength": "medium",
-                        "timestamp": c3.timestamp
-                    })
-
-            # Pin Bar / Rejection
             body = abs(c3.close - c3.open)
             total_range = c3.high - c3.low
-            if total_range > 0 and body / total_range < 0.3:
-                upper_wick = c3.high - max(c3.open, c3.close)
-                lower_wick = min(c3.open, c3.close) - c3.low
-                # Long lower wick (bullish rejection)
-                if lower_wick > 2 * body and lower_wick > upper_wick:
-                    patterns.append({
-                        "index": i,
-                        "type": "pin_bar_bullish",
-                        "direction": "bullish",
-                        "strength": "medium",
-                        "timestamp": c3.timestamp
-                    })
-                # Long upper wick (bearish rejection)
-                if upper_wick > 2 * body and upper_wick > lower_wick:
-                    patterns.append({
-                        "index": i,
-                        "type": "pin_bar_bearish",
-                        "direction": "bearish",
-                        "strength": "medium",
-                        "timestamp": c3.timestamp
-                    })
+            if total_range == 0:
+                continue
+            body_ratio = body / total_range
+
+            upper_wick = c3.high - max(c3.open, c3.close)
+            lower_wick = min(c3.open, c3.close) - c3.low
+
+            # --- Engulfing ---
+            # Bullish Engulfing
+            body2 = abs(c2.close - c2.open)
+            body3 = abs(c3.close - c3.open)
+            if (body2 > 0 and body3 > 0 and
+                c2.close < c2.open and
+                c3.close > c3.open and
+                c3.open < c2.close and
+                c3.close > c2.open):
+                patterns.append({
+                    "index": i, "type": "bullish_engulfing",
+                    "direction": "bullish", "strength": "strong",
+                    "timestamp": c3.timestamp
+                })
+                continue
+
+            # Bearish Engulfing
+            if (body2 > 0 and body3 > 0 and
+                c2.close > c2.open and
+                c3.close < c3.open and
+                c3.open > c2.close and
+                c3.close < c2.open):
+                patterns.append({
+                    "index": i, "type": "bearish_engulfing",
+                    "direction": "bearish", "strength": "strong",
+                    "timestamp": c3.timestamp
+                })
+                continue
+
+            # --- Reversal bars (hammer / shooting star) ---
+            # Skip candles where body dominates (>60% of range)
+            if body_ratio > 0.6:
+                continue
+
+            dominant_wick = max(upper_wick, lower_wick)
+            wick_ratio = dominant_wick / total_range
+
+            # Need wick >= 55% of total range AND >= 3x body
+            if wick_ratio < 0.55 or dominant_wick < body * 3:
+                continue
+
+            # Trend context: hammer should follow a downtrend, star an uptrend
+            trend_down = i >= 3 and candles[i - 1].close < candles[i - 3].close
+            trend_up = i >= 3 and candles[i - 1].close > candles[i - 3].close
+
+            if lower_wick > upper_wick and (trend_down or i < 3):
+                patterns.append({
+                    "index": i, "type": "hammer",
+                    "direction": "bullish", "strength": "medium",
+                    "timestamp": c3.timestamp
+                })
+            elif upper_wick > lower_wick and (trend_up or i < 3):
+                patterns.append({
+                    "index": i, "type": "shooting_star",
+                    "direction": "bearish", "strength": "medium",
+                    "timestamp": c3.timestamp
+                })
 
         return patterns
 

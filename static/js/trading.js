@@ -13,27 +13,21 @@ class TradingControls {
         // DOM elements
         this.btnBuy = document.getElementById('btnBuy');
         this.btnSell = document.getElementById('btnSell');
-        this.tradeAmount = document.getElementById('tradeAmount');
-        this.tradeDuration = document.getElementById('tradeDuration');
-        this.tradeDurationUnit = document.getElementById('tradeDurationUnit');
+        this.tradeLotSize = document.getElementById('tradeLotSize');
         this.stopLossInput = document.getElementById('stopLoss');
         this.takeProfitInput = document.getElementById('takeProfit');
         this.tradeStatus = document.getElementById('tradeStatus');
-        this.positionsList = document.getElementById('positionsList');
         this.btnConnect = document.getElementById('btnConnect');
-        this.refreshPositions = document.getElementById('refreshPositions');
         this.connectionStatus = document.getElementById('connectionStatus');
         this.accountBalance = document.getElementById('accountBalance');
-        this.accountInfo = document.getElementById('accountInfo');
 
         this._bindEvents();
     }
 
     _bindEvents() {
-        this.btnBuy.addEventListener('click', () => this._placeTrade('CALL'));
-        this.btnSell.addEventListener('click', () => this._placeTrade('PUT'));
+        this.btnBuy.addEventListener('click', () => this._placeTrade('BUY'));
+        this.btnSell.addEventListener('click', () => this._placeTrade('SELL'));
         this.btnConnect.addEventListener('click', () => this._toggleConnection());
-        this.refreshPositions.addEventListener('click', () => this.fetchPositions());
     }
 
     /**
@@ -107,16 +101,9 @@ class TradingControls {
                 this.accountBalance.classList.remove('d-none');
                 document.getElementById('balanceValue').textContent = data.balance.toFixed(2);
 
-                this.accountInfo.classList.remove('d-none');
-                document.getElementById('accountBalanceVal').textContent = `$${data.balance.toFixed(2)}`;
-                document.getElementById('accountLogin').textContent = data.loginid;
-                document.getElementById('accountCurrency').textContent = data.currency;
-
                 this._showToast('Connected',
                     `Logged in as ${data.loginid} | Balance: $${data.balance.toFixed(2)}`
                 );
-
-                this.fetchPositions();
             } else {
                 this._showToast('Connection Failed', data.error || 'Authentication failed');
                 this._updateConnectionUI(false);
@@ -129,34 +116,31 @@ class TradingControls {
 
     _updateConnectionUI(connected) {
         if (connected) {
-            this.connectionStatus.innerHTML = '<i class="bi bi-wifi"></i> Connected';
+            this.connectionStatus.innerHTML = '<i class="bi bi-wifi"></i>';
             this.connectionStatus.className = 'badge bg-success';
             this.btnConnect.innerHTML = '<i class="bi bi-plug-fill"></i> Disconnect';
-            this.btnConnect.className = 'btn btn-outline-danger btn-sm w-100 rounded-pill';
+            this.btnConnect.className = 'btn btn-outline-danger btn-sm rounded-pill';
         } else {
-            this.connectionStatus.innerHTML = '<i class="bi bi-wifi-off"></i> Disconnected';
+            this.connectionStatus.innerHTML = '<i class="bi bi-wifi-off"></i> Off';
             this.connectionStatus.className = 'badge bg-warning text-dark';
-            this.btnConnect.innerHTML = '<i class="bi bi-plug"></i> Connect to Deriv';
-            this.btnConnect.className = 'btn btn-primary btn-sm w-100 rounded-pill';
+            this.btnConnect.innerHTML = '<i class="bi bi-plug"></i> Connect';
+            this.btnConnect.className = 'btn btn-primary btn-sm rounded-pill';
             this.accountBalance.classList.add('d-none');
-            this.accountInfo.classList.add('d-none');
         }
     }
 
     /**
-     * Place a buy (CALL) or sell (PUT) trade.
+     * Open a Buy (Long) or Sell (Short) position.
      */
-    async _placeTrade(contractType) {
-        const amount = parseFloat(this.tradeAmount.value);
-        const duration = parseInt(this.tradeDuration.value);
-        const durationUnit = this.tradeDurationUnit.value;
+    async _placeTrade(direction) {
+        const lotSize = parseFloat(this.tradeLotSize.value);
 
-        if (!amount || amount <= 0) {
-            this._showTradeStatus('Please enter a valid stake amount', 'warning');
+        if (!lotSize || lotSize <= 0) {
+            this._showTradeStatus('Enter a valid lot size', 'warning');
             return;
         }
 
-        this._showTradeStatus('Placing trade...', 'info');
+        this._showTradeStatus(`Opening ${direction} position...`, 'info');
         this.btnBuy.disabled = true;
         this.btnSell.disabled = true;
 
@@ -166,161 +150,28 @@ class TradingControls {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     symbol: this.currentSymbol,
-                    amount: amount,
-                    contract_type: contractType,
-                    duration: duration,
-                    duration_unit: durationUnit,
+                    lot_size: lotSize,
+                    direction: direction,
+                    stop_loss: parseFloat(this.stopLossInput.value) || 0,
+                    take_profit: parseFloat(this.takeProfitInput.value) || 0,
                 }),
             });
 
             const data = await response.json();
 
             if (data.success) {
-                const action = contractType === 'CALL' ? 'BUY' : 'SELL';
                 this._showTradeStatus(
-                    `${action} trade placed! Contract ID: ${data.contract_id.slice(0, 8)}...`,
+                    `${direction} position opened`,
                     'success'
                 );
-                this.activeContractId = data.contract_id;
-
-                // If stop loss is set and we have a contract, we'd set up monitoring
-                const sl = parseFloat(this.stopLossInput.value);
-                if (sl > 0) {
-                    this._showTradeStatus(
-                        `Trade active with Stop Loss at $${sl.toFixed(2)}`,
-                        'success'
-                    );
-                }
-
-                // Refresh positions
-                setTimeout(() => this.fetchPositions(), 2000);
             } else {
-                this._showTradeStatus(
-                    'Error: ' + (data.error || 'Trade failed'),
-                    'danger'
-                );
+                this._showTradeStatus('Error: ' + (data.error || 'Trade failed'), 'danger');
             }
         } catch (err) {
             this._showTradeStatus('Error: ' + err.message, 'danger');
         } finally {
             this.btnBuy.disabled = false;
             this.btnSell.disabled = false;
-        }
-    }
-
-    /**
-     * Fetch open positions from Deriv.
-     */
-    async fetchPositions() {
-        if (!this.authenticated) return;
-
-        try {
-            const response = await fetch('/api/portfolio');
-            const data = await response.json();
-
-            if (data.success && data.portfolio) {
-                this._renderPositions(data.portfolio);
-            }
-        } catch (err) {
-            console.error('Failed to fetch positions:', err);
-        }
-    }
-
-    _renderPositions(portfolioData) {
-        const portfolio = portfolioData.portfolio || [];
-        const contracts = portfolio.contracts || [];
-
-        if (contracts.length === 0) {
-            this.positionsList.innerHTML = `
-                <div class="text-center text-secondary py-3">
-                    <i class="bi bi-inbox" style="font-size: 1.5rem;"></i>
-                    <p class="mb-0 mt-1">No open positions</p>
-                </div>
-            `;
-            return;
-        }
-
-        let html = '';
-        contracts.forEach(c => {
-            const isProfitable = parseFloat(c.profit) > 0;
-            const profitClass = isProfitable ? 'text-success' : 'text-danger';
-
-            html += `
-                <div class="position-item">
-                    <div class="d-flex justify-content-between">
-                        <span class="fw-bold">${c.contract_type || 'Contract'}</span>
-                        <span class="${profitClass}">${c.profit || '0.00'}</span>
-                    </div>
-                    <div class="d-flex justify-content-between text-secondary">
-                        <small>${c.symbol || this.currentSymbol}</small>
-                        <small>Buy: $${c.buy_price || '--'}</small>
-                    </div>
-                    <div class="d-flex justify-content-between text-secondary">
-                        <small>ID: ${(c.contract_id || '').slice(0, 8)}...</small>
-                        <button class="btn btn-outline-danger btn-sm py-0 sell-btn"
-                                data-contract-id="${c.contract_id}"
-                                onclick="tradingControls._sellContract('${c.contract_id}')">
-                            Close
-                        </button>
-                    </div>
-                </div>
-            `;
-        });
-
-        this.positionsList.innerHTML = html;
-    }
-
-    /**
-     * Sell/close a contract.
-     */
-    async _sellContract(contractId) {
-        if (!confirm('Close this position?')) return;
-
-        try {
-            const response = await fetch('/api/sell', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contract_id: contractId }),
-            });
-
-            const data = await response.json();
-            if (data.success) {
-                this._showToast('Position Closed', `Contract ${contractId.slice(0, 8)}... closed`);
-                this.fetchPositions();
-                this.fetchBalance();
-            } else {
-                this._showToast('Error', data.error || 'Failed to close position');
-            }
-        } catch (err) {
-            this._showToast('Error', err.message);
-        }
-    }
-
-    /**
-     * Fetch account balance.
-     */
-    async fetchBalance() {
-        if (!this.authenticated) return;
-
-        try {
-            const response = await fetch('/api/balance');
-            const data = await response.json();
-
-            if (data.success && data.balance) {
-                const balance = data.balance.balance || {};
-                const amount = parseFloat(balance.balance || 0).toFixed(2);
-                const loginId = balance.loginid || '--';
-                const currency = balance.currency || 'USD';
-
-                this.accountBalance.classList.remove('d-none');
-                document.getElementById('balanceValue').textContent = amount;
-                this.accountInfo.classList.remove('d-none');
-                document.getElementById('accountBalanceVal').textContent = `$${amount}`;
-                document.getElementById('accountLogin').textContent = loginId;
-                document.getElementById('accountCurrency').textContent = currency;
-            }
-        } catch (err) {
-            console.error('Failed to fetch balance:', err);
         }
     }
 
