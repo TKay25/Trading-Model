@@ -29,54 +29,50 @@ class TradingChart {
             layout: {
                 background: { color: '#ffffff' },
                 textColor: '#6b7280',
-                fontSize: 11,
+                fontSize: 12,
+                fontFamily: 'Inter, -apple-system, sans-serif',
             },
             grid: {
-                vertLines: { color: '#f3f4f6' },
-                horzLines: { color: '#f3f4f6' },
+                vertLines: { color: '#f0f2f5' },
+                horzLines: { color: '#f0f2f5' },
             },
             crosshair: {
                 mode: LightweightCharts.CrosshairMode.Normal,
                 vertLine: {
-                    color: '#9ca3af',
+                    color: '#2962ff',
                     width: 1,
                     style: LightweightCharts.LineStyle.Dashed,
-                    labelBackgroundColor: '#4361ee',
+                    labelBackgroundColor: '#2962ff',
                 },
                 horzLine: {
-                    color: '#9ca3af',
+                    color: '#2962ff',
                     width: 1,
                     style: LightweightCharts.LineStyle.Dashed,
-                    labelBackgroundColor: '#4361ee',
+                    labelBackgroundColor: '#2962ff',
                 },
             },
             rightPriceScale: {
-                borderColor: '#e5e7eb',
-                scaleMargins: { top: 0.1, bottom: 0.25 },
+                borderColor: '#e4e7ec',
+                scaleMargins: { top: 0.1, bottom: 0.3 },
             },
             timeScale: {
-                borderColor: '#e5e7eb',
+                borderColor: '#e4e7ec',
                 timeVisible: true,
                 secondsVisible: false,
                 rightOffset: 12,
                 barSpacing: 8,
             },
-            watermark: {
-                text: 'Deriv',
-                color: 'rgba(0, 0, 0, 0.03)',
-                fontSize: 60,
-                visible: true,
-            },
         });
 
         // Candlestick series
         this.candleSeries = this.chart.addCandlestickSeries({
-            upColor: '#22ab94',
-            downColor: '#f23645',
-            borderUpColor: '#22ab94',
-            borderDownColor: '#f23645',
-            wickUpColor: '#22ab94',
-            wickDownColor: '#f23645',
+            upColor: '#00c853',
+            downColor: '#ff1744',
+            borderUpColor: '#00c853',
+            borderDownColor: '#ff1744',
+            wickUpColor: '#00c853',
+            wickDownColor: '#ff1744',
+            priceFormat: { type: 'price', minMove: 0.01 },
         });
 
         // Volume series (hidden under candles)

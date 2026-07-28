@@ -229,17 +229,23 @@ class TradingDashboardApp {
         if (tdi.rsi !== null) {
             this.tdiProgress.style.width = `${tdi.rsi}%`;
             if (tdi.rsi > 70) {
-                this.tdiProgress.className = 'progress-bar bg-danger';
-                this.tdiRsi.className = 'fw-bold text-danger';
+                this.tdiProgress.className = 'tdi-fill bearish';
+                this.tdiRsi.className = 'tdi-value';
+                this.tdiRsi.style.color = 'var(--red)';
                 this.tdiZone.textContent = 'Overbought';
+                this.tdiZone.style.color = 'var(--red)';
             } else if (tdi.rsi < 30) {
-                this.tdiProgress.className = 'progress-bar bg-success';
-                this.tdiRsi.className = 'fw-bold text-success';
+                this.tdiProgress.className = 'tdi-fill bullish';
+                this.tdiRsi.className = 'tdi-value';
+                this.tdiRsi.style.color = 'var(--green)';
                 this.tdiZone.textContent = 'Oversold';
+                this.tdiZone.style.color = 'var(--green)';
             } else {
-                this.tdiProgress.className = 'progress-bar bg-primary';
-                this.tdiRsi.className = 'fw-bold';
-                this.tdiZone.textContent = 'Neutral';
+                this.tdiProgress.className = 'tdi-fill neutral';
+                this.tdiRsi.className = 'tdi-value';
+                this.tdiRsi.style.color = '';
+                this.tdiZone.textContent = `${tdi.rsi.toFixed(0)}`;
+                this.tdiZone.style.color = '';
             }
         }
     }

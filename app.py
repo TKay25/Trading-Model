@@ -34,6 +34,9 @@ def init_services():
     trading_service = TradingService(symbol=Config.DEFAULT_SYMBOL)
 
 
+# Initialize on startup (needed for gunicorn/production)
+init_services()
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------

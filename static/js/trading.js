@@ -116,15 +116,15 @@ class TradingControls {
 
     _updateConnectionUI(connected) {
         if (connected) {
-            this.connectionStatus.innerHTML = '<i class="bi bi-wifi"></i>';
-            this.connectionStatus.className = 'badge bg-success';
+            this.connectionStatus.innerHTML = '<span class="status-dot"></span> Connected';
+            this.connectionStatus.className = 'status-badge status-online';
             this.btnConnect.innerHTML = '<i class="bi bi-plug-fill"></i> Disconnect';
-            this.btnConnect.className = 'btn btn-outline-danger btn-sm rounded-pill';
+            this.btnConnect.className = 'connect-btn disconnect';
         } else {
-            this.connectionStatus.innerHTML = '<i class="bi bi-wifi-off"></i> Off';
-            this.connectionStatus.className = 'badge bg-warning text-dark';
+            this.connectionStatus.innerHTML = '<span class="status-dot"></span> Offline';
+            this.connectionStatus.className = 'status-badge status-offline';
             this.btnConnect.innerHTML = '<i class="bi bi-plug"></i> Connect';
-            this.btnConnect.className = 'btn btn-primary btn-sm rounded-pill';
+            this.btnConnect.className = 'connect-btn';
             this.accountBalance.classList.add('d-none');
         }
     }

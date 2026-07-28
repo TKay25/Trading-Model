@@ -1,160 +1,159 @@
 {% extends "base.html" %}
 
-{% block title %}Trading Dashboard - {{ default_symbol }}{% endblock %}
+{% block title %}TradeVue — {{ default_symbol }}{% endblock %}
 
 {% block content %}
-<div class="row g-4">
-    <!-- Left: Chart -->
-    <div class="col-lg-8">
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-body py-2">
-                <div class="d-flex align-items-center gap-2 flex-wrap">
-                    <select id="symbolSelect" class="form-select form-select-sm" style="width: auto; min-width: 180px;">
-                        {% for symbol, name in symbols.items() %}
-                        <option value="{{ symbol }}" {% if symbol == default_symbol %}selected{% endif %}>
-                            {{ name }} ({{ symbol }})
-                        </option>
-                        {% endfor %}
-                    </select>
-                    <div class="btn-group btn-group-sm">
-                        {% for tf in timeframes %}
-                        <button type="button"
-                                class="btn btn-outline-secondary timeframe-btn {% if tf == default_timeframe %}active{% endif %}"
-                                data-timeframe="{{ tf }}">{{ tf }}</button>
-                        {% endfor %}
-                    </div>
-                    <button type="button" class="btn btn-outline-secondary btn-sm ms-auto" id="refreshChart" title="Refresh">
-                        <i class="bi bi-arrow-clockwise"></i>
-                    </button>
+<div class="dashboard-grid">
+    <!-- Chart Section -->
+    <div class="chart-section">
+        <div class="chart-toolbar">
+            <div class="toolbar-group">
+                <select id="symbolSelect" class="symbol-select">
+                    {% for symbol, name in symbols.items() %}
+                    <option value="{{ symbol }}" {% if symbol == default_symbol %}selected{% endif %}>
+                        {{ name.split('(')[0]|trim }} ({{ symbol }})
+                    </option>
+                    {% endfor %}
+                </select>
+                <div class="tf-group">
+                    {% for tf in timeframes %}
+                    <button class="tf-btn {% if tf == default_timeframe %}active{% endif %}"
+                            data-timeframe="{{ tf }}">{{ tf }}</button>
+                    {% endfor %}
                 </div>
+            </div>
+            <div class="toolbar-group">
+                <button class="toolbar-btn" id="refreshChart" title="Refresh">
+                    <i class="bi bi-arrow-clockwise"></i>
+                </button>
             </div>
         </div>
 
-        <div class="card border-0 shadow-sm">
-            <div class="card-body p-1">
-                <div id="chartContainer" style="height: 520px; border-radius: 8px; overflow: hidden;">
-                    <div id="chartLoading" class="position-absolute top-50 start-50 translate-middle">
-                        <div class="spinner-border text-primary" role="status"></div>
-                        <p class="text-muted mt-2 mb-0">Loading...</p>
-                    </div>
-                    <div id="tradingChart" style="width: 100%; height: 520px;"></div>
+        <div class="chart-panel">
+            <div id="chartContainer">
+                <div id="chartLoading">
+                    <div class="spinner"></div>
+                    <span>Loading market data...</span>
                 </div>
+                <div id="tradingChart"></div>
             </div>
         </div>
     </div>
 
-    <!-- Right: Decision Panel -->
-    <div class="col-lg-4">
+    <!-- Sidebar -->
+    <div class="sidebar">
 
-        <!-- Decision -->
-        <div class="card border-0 shadow-sm mb-3" id="signalCard">
-            <div class="card-header bg-white border-bottom-light py-2">
-                <span class="fw-medium"><i class="bi bi-bullseye text-primary"></i> Decision</span>
+        <!-- Signal Card -->
+        <div class="side-card" id="signalCard">
+            <div class="side-card-header">
+                <i class="bi bi-lightning-fill"></i>
+                <span>Signal</span>
             </div>
-            <div class="card-body text-center" id="signalBody" style="min-height: 120px;">
-                <div id="noSignal" class="text-muted d-flex flex-column justify-content-center h-100">
-                    <i class="bi bi-hourglass-split" style="font-size: 2rem;"></i>
-                    <p class="mt-2 mb-0">Analyzing market...</p>
+            <div class="side-card-body" id="signalBody">
+                <div id="noSignal" class="signal-empty">
+                    <i class="bi bi-hourglass-split"></i>
+                    <p>Awaiting signal...</p>
                 </div>
                 <div id="signalContent" class="d-none">
-                    <div id="decisionBadge" class="mb-2"></div>
-                    <div id="decisionSummary" class="small text-muted mb-2"></div>
-                    <div id="decisionReason" class="small"></div>
+                    <div id="decisionBadge" class="decision-badge-wrap"></div>
+                    <div id="decisionSummary" class="decision-confidence"></div>
+                    <div id="decisionReason" class="decision-reason"></div>
                 </div>
             </div>
         </div>
 
-        <!-- TDI + Patterns compact -->
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header bg-white border-bottom-light py-2">
-                <span class="fw-medium"><i class="bi bi-graph-up text-primary"></i> TDI Indicator</span>
+        <!-- TDI -->
+        <div class="side-card">
+            <div class="side-card-header">
+                <i class="bi bi-activity"></i>
+                <span>TDI</span>
             </div>
-            <div class="card-body py-2">
-                <div class="row g-1 small">
-                    <div class="col-6 d-flex justify-content-between">
-                        <span class="text-muted">RSI:</span>
-                        <span id="tdiRsi" class="fw-bold">--</span>
+            <div class="side-card-body">
+                <div class="tdi-grid">
+                    <div class="tdi-item">
+                        <span class="tdi-label">RSI</span>
+                        <span id="tdiRsi" class="tdi-value">--</span>
                     </div>
-                    <div class="col-6 d-flex justify-content-between">
-                        <span class="text-muted">Smoothed:</span>
-                        <span id="tdiRsiSmoothed" class="fw-bold">--</span>
+                    <div class="tdi-item">
+                        <span class="tdi-label">Smoothed</span>
+                        <span id="tdiRsiSmoothed" class="tdi-value">--</span>
                     </div>
-                    <div class="col-6 d-flex justify-content-between">
-                        <span class="text-muted">Market Base:</span>
-                        <span id="tdiMarketBase" class="fw-bold">--</span>
+                    <div class="tdi-item">
+                        <span class="tdi-label">M. Base</span>
+                        <span id="tdiMarketBase" class="tdi-value">--</span>
                     </div>
-                    <div class="col-6 d-flex justify-content-between">
-                        <span class="text-muted">Patterns:</span>
-                        <span id="tdiPatterns" class="fw-bold">0</span>
+                    <div class="tdi-item">
+                        <span class="tdi-label">Patterns</span>
+                        <span id="tdiPatterns" class="tdi-value">0</span>
                     </div>
                 </div>
-                <div class="progress mt-2" style="height: 6px;">
-                    <div id="tdiProgress" class="progress-bar" style="width: 50%"></div>
-                </div>
-                <div class="d-flex justify-content-between small text-muted">
-                    <span>Oversold</span>
-                    <span id="tdiZone" class="fw-semibold">Neutral</span>
-                    <span>Overbought</span>
+                <div class="tdi-meter">
+                    <div class="tdi-track">
+                        <div id="tdiProgress" class="tdi-fill" style="width: 50%"></div>
+                    </div>
+                    <div class="tdi-labels">
+                        <span>0</span>
+                        <span id="tdiZone" class="tdi-zone">50</span>
+                        <span>100</span>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Trade -->
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header bg-white border-bottom-light py-2">
-                <span class="fw-medium"><i class="bi bi-controller text-primary"></i> Trade</span>
+        <!-- Trade Entry -->
+        <div class="side-card">
+            <div class="side-card-header">
+                <i class="bi bi-controller"></i>
+                <span>Quick Trade</span>
             </div>
-            <div class="card-body">
-                <div class="mb-2">
-                    <label class="small text-muted">Lot Size</label>
-                    <input type="number" class="form-control form-control-sm" id="tradeLotSize" value="0.10" min="0.01" step="0.01">
+            <div class="side-card-body">
+                <div class="trade-field">
+                    <label>Lot Size</label>
+                    <input type="number" id="tradeLotSize" value="0.10" min="0.01" step="0.01">
                 </div>
-                <div class="row g-2 mb-2">
-                    <div class="col-6">
-                        <label class="small text-muted">Stop Loss</label>
-                        <input type="number" class="form-control form-control-sm" id="stopLoss" step="0.01" placeholder="--">
+                <div class="trade-row">
+                    <div class="trade-field flex-1">
+                        <label>Stop Loss</label>
+                        <input type="number" id="stopLoss" step="0.01" placeholder="--">
                     </div>
-                    <div class="col-6">
-                        <label class="small text-muted">Take Profit</label>
-                        <input type="number" class="form-control form-control-sm" id="takeProfit" step="0.01" placeholder="--">
+                    <div class="trade-field flex-1">
+                        <label>Take Profit</label>
+                        <input type="number" id="takeProfit" step="0.01" placeholder="--">
                     </div>
                 </div>
-                <div class="d-flex gap-2">
-                    <button class="btn btn-success btn-sm flex-fill rounded-pill" id="btnBuy">
-                        <i class="bi bi-arrow-up-short"></i> BUY
+                <div class="trade-actions">
+                    <button class="btn-buy" id="btnBuy">
+                        <i class="bi bi-arrow-up-short"></i> Buy
                     </button>
-                    <button class="btn btn-danger btn-sm flex-fill rounded-pill" id="btnSell">
-                        <i class="bi bi-arrow-down-short"></i> SELL
+                    <button class="btn-sell" id="btnSell">
+                        <i class="bi bi-arrow-down-short"></i> Sell
                     </button>
                 </div>
-                <div id="tradeStatus" class="mt-2 d-none small"></div>
+                <div id="tradeStatus" class="trade-status d-none"></div>
             </div>
         </div>
 
-        <!-- Account compact -->
-        <div class="card border-0 shadow-sm">
-            <div class="card-body py-2 d-flex align-items-center gap-2">
-                <button class="btn btn-primary btn-sm rounded-pill" id="btnConnect">
-                    <i class="bi bi-plug"></i> Connect
-                </button>
-                <span id="connectionStatus" class="badge bg-warning text-dark ms-auto">
-                    <i class="bi bi-wifi-off"></i> Off
-                </span>
-                <span id="accountBalance" class="badge bg-success d-none ms-auto">
-                    $<span id="balanceValue">0.00</span>
-                </span>
-            </div>
+        <!-- Connection Bar -->
+        <div class="connect-bar">
+            <button class="connect-btn" id="btnConnect">
+                <i class="bi bi-plug"></i> Connect
+            </button>
+            <span id="connectionStatus" class="status-badge status-offline">
+                <span class="status-dot"></span> Offline
+            </span>
+            <span id="accountBalance" class="status-balance d-none">
+                $<span id="balanceValue">0.00</span>
+            </span>
         </div>
-
     </div>
 </div>
 
-<div class="toast-container position-fixed bottom-0 end-0 p-3">
-    <div id="notificationToast" class="toast border-0 shadow" role="alert">
-        <div class="toast-header bg-white">
-            <i class="bi bi-info-circle text-primary me-2"></i>
-            <strong class="me-auto" id="toastTitle">Notification</strong>
-            <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+<div class="toast-container">
+    <div id="notificationToast" class="toast-custom" role="alert">
+        <div class="toast-header">
+            <i class="bi bi-info-circle"></i>
+            <strong id="toastTitle">Notice</strong>
+            <button type="button" onclick="this.closest('.toast-custom').classList.remove('show')">&times;</button>
         </div>
         <div class="toast-body" id="toastMessage"></div>
     </div>
