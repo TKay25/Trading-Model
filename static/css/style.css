@@ -1,23 +1,33 @@
-/* Trading Dashboard Custom Styles */
+/* Trading Dashboard - Light Theme */
 
 /* General */
 body {
-    background-color: #1a1a2e;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ee 100%);
     min-height: 100vh;
+    color: #2d3436;
 }
 
 /* Chart Area */
 #chartContainer {
-    background: #0d1117;
-    border-radius: 4px;
+    background: #ffffff;
+    border-radius: 8px;
     overflow: hidden;
 }
 
 /* Timeframe Buttons */
 .timeframe-btn.active {
-    background-color: #0d6efd;
-    border-color: #0d6efd;
-    color: white;
+    background-color: #4361ee !important;
+    border-color: #4361ee !important;
+    color: white !important;
+}
+
+.timeframe-btn {
+    transition: all 0.2s ease;
+}
+
+.timeframe-btn:not(.active):hover {
+    background-color: #eef1ff;
 }
 
 /* Trading Panel */
@@ -26,13 +36,13 @@ body {
 }
 
 #signalCard.buy-signal {
-    border-color: #198754 !important;
-    box-shadow: 0 0 10px rgba(25, 135, 84, 0.3);
+    box-shadow: 0 0 20px rgba(25, 135, 84, 0.15);
+    border: 1px solid rgba(25, 135, 84, 0.3) !important;
 }
 
 #signalCard.sell-signal {
-    border-color: #dc3545 !important;
-    box-shadow: 0 0 10px rgba(220, 53, 69, 0.3);
+    box-shadow: 0 0 20px rgba(220, 53, 69, 0.15);
+    border: 1px solid rgba(220, 53, 69, 0.3) !important;
 }
 
 /* Signal Badge */
@@ -40,21 +50,27 @@ body {
     font-size: 1.2rem;
     padding: 0.5rem 1.5rem;
     border-radius: 50px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
 /* TDI Progress Bar */
 #tdiProgress {
     transition: width 0.5s ease;
+    border-radius: 4px;
 }
 
 /* Positions List */
 .position-item {
-    border-bottom: 1px solid #2a2a3e;
+    border-bottom: 1px solid #f0f0f0;
     padding: 0.5rem 0;
 }
 
 .position-item:last-child {
     border-bottom: none;
+}
+
+.position-item:hover {
+    background-color: #f8f9ff;
 }
 
 /* Custom Scrollbar */
@@ -63,22 +79,22 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-    background: #1a1a2e;
+    background: #f1f1f1;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #3a3a5e;
+    background: #c1c1c1;
     border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #5a5a7e;
+    background: #a1a1a1;
 }
 
 /* Drawing Tool Active */
 .drawing-tool-active {
-    background-color: #0d6efd !important;
-    border-color: #0d6efd !important;
+    background-color: #4361ee !important;
+    border-color: #4361ee !important;
     color: white !important;
 }
 
@@ -93,17 +109,31 @@ body {
 
 /* Card Style */
 .card {
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    border-radius: 12px;
 }
 
 .card-header {
     font-weight: 600;
     font-size: 0.9rem;
+    border-radius: 12px 12px 0 0 !important;
 }
 
 /* Toast override */
 .toast {
-    min-width: 250px;
+    min-width: 280px;
+    border-radius: 12px;
+}
+
+/* Form controls */
+.form-control, .form-select {
+    border-radius: 8px;
+    border: 1px solid #dee2e6;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.form-control:focus, .form-select:focus {
+    border-color: #4361ee;
+    box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.12);
 }
 
 /* Animation for signal flash */
@@ -115,6 +145,17 @@ body {
 
 .signal-active {
     animation: signalPulse 1s ease-in-out 3;
+}
+
+/* Navbar active link */
+.navbar .nav-link.active {
+    color: #4361ee !important;
+}
+
+/* Badge refinements */
+.badge {
+    font-weight: 500;
+    padding: 0.35em 0.65em;
 }
 
 /* Responsive adjustments */

@@ -3,16 +3,16 @@
 {% block title %}Trading Dashboard - {{ default_symbol }}{% endblock %}
 
 {% block content %}
-<div class="row g-3">
+<div class="row g-4">
     <!-- Left Column: Chart -->
     <div class="col-lg-9">
         <!-- Chart Controls -->
-        <div class="card bg-dark border-secondary mb-3">
+        <div class="card border-0 shadow-sm mb-3">
             <div class="card-body py-2">
                 <div class="row align-items-center g-2">
                     <!-- Symbol Selector -->
                     <div class="col-auto">
-                        <select id="symbolSelect" class="form-select form-select-sm bg-dark text-light border-secondary">
+                        <select id="symbolSelect" class="form-select form-select-sm border-light-subtle">
                             {% for symbol, name in symbols.items() %}
                             <option value="{{ symbol }}" {% if symbol == default_symbol %}selected{% endif %}>
                                 {{ name }} ({{ symbol }})
@@ -57,14 +57,14 @@
         </div>
 
         <!-- Chart Area -->
-        <div class="card bg-dark border-secondary mb-3">
-            <div class="card-body p-2">
-                <div id="chartContainer" style="height: 500px; position: relative;">
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-body p-1">
+                <div id="chartContainer" style="height: 500px; position: relative; border-radius: 8px; overflow: hidden;">
                     <div id="chartLoading" class="position-absolute top-50 start-50 translate-middle">
-                        <div class="spinner-border text-light" role="status">
+                        <div class="spinner-border text-primary" role="status">
                             <span class="visually-hidden">Loading chart...</span>
                         </div>
-                        <p class="text-light mt-2 mb-0">Loading chart data...</p>
+                        <p class="text-muted mt-2 mb-0">Loading chart data...</p>
                     </div>
                     <div id="tradingChart" style="width: 100%; height: 500px;"></div>
                 </div>
@@ -72,14 +72,14 @@
         </div>
 
         <!-- Pattern Detection Results -->
-        <div class="card bg-dark border-secondary mb-3">
-            <div class="card-header bg-dark border-secondary d-flex justify-content-between align-items-center">
-                <span><i class="bi bi-search"></i> Pattern Detection</span>
-                <span id="patternCount" class="badge bg-info">0 patterns</span>
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header bg-white border-bottom-light d-flex justify-content-between align-items-center">
+                <span class="fw-medium"><i class="bi bi-search text-primary"></i> Pattern Detection</span>
+                <span id="patternCount" class="badge bg-primary-subtle text-primary">0 patterns</span>
             </div>
             <div class="card-body">
                 <div id="patternList" class="row g-2">
-                    <div class="col-12 text-center text-secondary">
+                    <div class="col-12 text-center text-muted">
                         <small>Load chart data to see detected patterns</small>
                     </div>
                 </div>
@@ -90,38 +90,38 @@
     <!-- Right Column: Trading Panel -->
     <div class="col-lg-3">
         <!-- TDI Indicator Panel -->
-        <div class="card bg-dark border-secondary mb-3">
-            <div class="card-header bg-dark border-secondary">
-                <i class="bi bi-graph-up"></i> TDI Indicator
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header bg-white border-bottom-light">
+                <span class="fw-medium"><i class="bi bi-graph-up text-primary"></i> TDI Indicator</span>
             </div>
             <div class="card-body">
                 <div id="tdiValues" class="small">
                     <div class="d-flex justify-content-between mb-1">
-                        <span class="text-secondary">RSI:</span>
+                        <span class="text-muted">RSI:</span>
                         <span id="tdiRsi" class="fw-bold">--</span>
                     </div>
                     <div class="d-flex justify-content-between mb-1">
-                        <span class="text-secondary">RSI Smoothed:</span>
+                        <span class="text-muted">RSI Smoothed:</span>
                         <span id="tdiRsiSmoothed" class="fw-bold">--</span>
                     </div>
                     <div class="d-flex justify-content-between mb-1">
-                        <span class="text-secondary">Market Base:</span>
+                        <span class="text-muted">Market Base:</span>
                         <span id="tdiMarketBase" class="fw-bold">--</span>
                     </div>
                     <div class="d-flex justify-content-between mb-1">
-                        <span class="text-secondary">Upper Band:</span>
+                        <span class="text-muted">Upper Band:</span>
                         <span id="tdiUpperBand" class="fw-bold text-danger">--</span>
                     </div>
                     <div class="d-flex justify-content-between mb-1">
-                        <span class="text-secondary">Lower Band:</span>
+                        <span class="text-muted">Lower Band:</span>
                         <span id="tdiLowerBand" class="fw-bold text-success">--</span>
                     </div>
                 </div>
                 <!-- TDI Status Bar -->
-                <div class="progress mt-2" style="height: 8px;">
+                <div class="progress mt-2 bg-light" style="height: 8px; border-radius: 4px;">
                     <div id="tdiProgress" class="progress-bar" role="progressbar" style="width: 50%"></div>
                 </div>
-                <div class="d-flex justify-content-between small text-secondary mt-1">
+                <div class="d-flex justify-content-between small text-muted mt-1">
                     <span>Oversold</span>
                     <span>Neutral</span>
                     <span>Overbought</span>
@@ -130,12 +130,12 @@
         </div>
 
         <!-- Signal Panel -->
-        <div class="card bg-dark border-secondary mb-3" id="signalCard">
-            <div class="card-header bg-dark border-secondary">
-                <i class="bi bi-bell"></i> Current Signal
+        <div class="card border-0 shadow-sm mb-3" id="signalCard">
+            <div class="card-header bg-white border-bottom-light">
+                <span class="fw-medium"><i class="bi bi-bell text-primary"></i> Current Signal</span>
             </div>
             <div class="card-body text-center" id="signalBody">
-                <div id="noSignal" class="text-secondary">
+                <div id="noSignal" class="text-muted">
                     <i class="bi bi-hourglass-split" style="font-size: 2rem;"></i>
                     <p class="mt-2 mb-0">Waiting for signal...</p>
                 </div>
@@ -147,25 +147,25 @@
         </div>
 
         <!-- Trading Controls -->
-        <div class="card bg-dark border-secondary mb-3">
-            <div class="card-header bg-dark border-secondary">
-                <i class="bi bi-controller"></i> Trade
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header bg-white border-bottom-light">
+                <span class="fw-medium"><i class="bi bi-controller text-primary"></i> Trade</span>
             </div>
             <div class="card-body">
                 <!-- Amount Input -->
                 <div class="mb-3">
-                    <label for="tradeAmount" class="form-label small">Stake Amount ($)</label>
-                    <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                    <label for="tradeAmount" class="form-label small fw-medium text-muted">Stake Amount ($)</label>
+                    <input type="number" class="form-control form-control-sm"
                            id="tradeAmount" value="1.00" min="0.5" step="0.50">
                 </div>
 
                 <!-- Duration -->
                 <div class="mb-3">
-                    <label class="form-label small">Duration</label>
+                    <label class="form-label small fw-medium text-muted">Duration</label>
                     <div class="input-group input-group-sm">
-                        <input type="number" class="form-control bg-dark text-light border-secondary"
+                        <input type="number" class="form-control"
                                id="tradeDuration" value="1" min="1" max="60">
-                        <select id="tradeDurationUnit" class="form-select form-select-sm bg-dark text-light border-secondary">
+                        <select id="tradeDurationUnit" class="form-select form-select-sm">
                             <option value="t">Ticks</option>
                             <option value="m" selected>Minutes</option>
                             <option value="h">Hours</option>
@@ -176,24 +176,24 @@
 
                 <!-- Stop Loss -->
                 <div class="mb-3">
-                    <label for="stopLoss" class="form-label small">Stop Loss ($)</label>
-                    <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                    <label for="stopLoss" class="form-label small fw-medium text-muted">Stop Loss ($)</label>
+                    <input type="number" class="form-control form-control-sm"
                            id="stopLoss" step="0.01" placeholder="Auto from signal">
                 </div>
 
                 <!-- Take Profit -->
                 <div class="mb-3">
-                    <label for="takeProfit" class="form-label small">Take Profit ($)</label>
-                    <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                    <label for="takeProfit" class="form-label small fw-medium text-muted">Take Profit ($)</label>
+                    <input type="number" class="form-control form-control-sm"
                            id="takeProfit" step="0.01" placeholder="Auto from signal">
                 </div>
 
                 <!-- Buy / Sell Buttons -->
                 <div class="d-grid gap-2">
-                    <button type="button" class="btn btn-success btn-sm" id="btnBuy">
+                    <button type="button" class="btn btn-success btn-sm rounded-pill" id="btnBuy">
                         <i class="bi bi-arrow-up-short"></i> BUY (CALL)
                     </button>
-                    <button type="button" class="btn btn-danger btn-sm" id="btnSell">
+                    <button type="button" class="btn btn-danger btn-sm rounded-pill" id="btnSell">
                         <i class="bi bi-arrow-down-short"></i> SELL (PUT)
                     </button>
                 </div>
@@ -204,16 +204,16 @@
         </div>
 
         <!-- Open Positions -->
-        <div class="card bg-dark border-secondary mb-3">
-            <div class="card-header bg-dark border-secondary d-flex justify-content-between">
-                <span><i class="bi bi-briefcase"></i> Open Positions</span>
-                <button class="btn btn-outline-info btn-sm" id="refreshPositions">
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header bg-white border-bottom-light d-flex justify-content-between">
+                <span class="fw-medium"><i class="bi bi-briefcase text-primary"></i> Open Positions</span>
+                <button class="btn btn-outline-secondary btn-sm" id="refreshPositions">
                     <i class="bi bi-arrow-clockwise"></i>
                 </button>
             </div>
             <div class="card-body p-2">
                 <div id="positionsList" class="small">
-                    <div class="text-center text-secondary py-3">
+                    <div class="text-center text-muted py-3">
                         <i class="bi bi-inbox" style="font-size: 1.5rem;"></i>
                         <p class="mb-0 mt-1">No open positions</p>
                         <small>Connect and authenticate to view</small>
@@ -223,27 +223,27 @@
         </div>
 
         <!-- Account Info -->
-        <div class="card bg-dark border-secondary">
-            <div class="card-header bg-dark border-secondary">
-                <i class="bi bi-person-circle"></i> Account
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white border-bottom-light">
+                <span class="fw-medium"><i class="bi bi-person-circle text-primary"></i> Account</span>
             </div>
             <div class="card-body small">
                 <div class="mb-2">
-                    <button class="btn btn-outline-primary btn-sm w-100" id="btnConnect">
+                    <button class="btn btn-primary btn-sm w-100 rounded-pill" id="btnConnect">
                         <i class="bi bi-plug"></i> Connect to Deriv
                     </button>
                 </div>
                 <div id="accountInfo" class="d-none">
-                    <div class="d-flex justify-content-between">
-                        <span class="text-secondary">Balance:</span>
+                    <div class="d-flex justify-content-between py-1">
+                        <span class="text-muted">Balance:</span>
                         <span id="accountBalanceVal" class="fw-bold">$0.00</span>
                     </div>
-                    <div class="d-flex justify-content-between">
-                        <span class="text-secondary">Login:</span>
+                    <div class="d-flex justify-content-between py-1">
+                        <span class="text-muted">Login:</span>
                         <span id="accountLogin" class="fw-bold">--</span>
                     </div>
-                    <div class="d-flex justify-content-between">
-                        <span class="text-secondary">Currency:</span>
+                    <div class="d-flex justify-content-between py-1">
+                        <span class="text-muted">Currency:</span>
                         <span id="accountCurrency" class="fw-bold">USD</span>
                     </div>
                 </div>
@@ -254,11 +254,11 @@
 
 <!-- Toast notification container -->
 <div class="toast-container position-fixed bottom-0 end-0 p-3">
-    <div id="notificationToast" class="toast bg-dark text-light border-secondary" role="alert">
-        <div class="toast-header bg-dark text-light border-secondary">
-            <i class="bi bi-info-circle me-2"></i>
+    <div id="notificationToast" class="toast border-0 shadow" role="alert">
+        <div class="toast-header bg-white">
+            <i class="bi bi-info-circle text-primary me-2"></i>
             <strong class="me-auto" id="toastTitle">Notification</strong>
-            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+            <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
         </div>
         <div class="toast-body" id="toastMessage"></div>
     </div>

@@ -132,12 +132,12 @@ class TradingControls {
             this.connectionStatus.innerHTML = '<i class="bi bi-wifi"></i> Connected';
             this.connectionStatus.className = 'badge bg-success';
             this.btnConnect.innerHTML = '<i class="bi bi-plug-fill"></i> Disconnect';
-            this.btnConnect.className = 'btn btn-outline-danger btn-sm w-100';
+            this.btnConnect.className = 'btn btn-outline-danger btn-sm w-100 rounded-pill';
         } else {
             this.connectionStatus.innerHTML = '<i class="bi bi-wifi-off"></i> Disconnected';
-            this.connectionStatus.className = 'badge bg-warning';
+            this.connectionStatus.className = 'badge bg-warning text-dark';
             this.btnConnect.innerHTML = '<i class="bi bi-plug"></i> Connect to Deriv';
-            this.btnConnect.className = 'btn btn-outline-primary btn-sm w-100';
+            this.btnConnect.className = 'btn btn-primary btn-sm w-100 rounded-pill';
             this.accountBalance.classList.add('d-none');
             this.accountInfo.classList.add('d-none');
         }

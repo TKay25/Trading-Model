@@ -27,35 +27,35 @@ class TradingChart {
 
         this.chart = LightweightCharts.createChart(this.container, {
             layout: {
-                background: { color: '#0d1117' },
-                textColor: '#8b949e',
+                background: { color: '#ffffff' },
+                textColor: '#6b7280',
                 fontSize: 11,
             },
             grid: {
-                vertLines: { color: '#1c2333' },
-                horzLines: { color: '#1c2333' },
+                vertLines: { color: '#f3f4f6' },
+                horzLines: { color: '#f3f4f6' },
             },
             crosshair: {
                 mode: LightweightCharts.CrosshairMode.Normal,
                 vertLine: {
-                    color: '#636d83',
+                    color: '#9ca3af',
                     width: 1,
                     style: LightweightCharts.LineStyle.Dashed,
-                    labelBackgroundColor: '#636d83',
+                    labelBackgroundColor: '#4361ee',
                 },
                 horzLine: {
-                    color: '#636d83',
+                    color: '#9ca3af',
                     width: 1,
                     style: LightweightCharts.LineStyle.Dashed,
-                    labelBackgroundColor: '#636d83',
+                    labelBackgroundColor: '#4361ee',
                 },
             },
             rightPriceScale: {
-                borderColor: '#2a2a3e',
+                borderColor: '#e5e7eb',
                 scaleMargins: { top: 0.1, bottom: 0.25 },
             },
             timeScale: {
-                borderColor: '#2a2a3e',
+                borderColor: '#e5e7eb',
                 timeVisible: true,
                 secondsVisible: false,
                 rightOffset: 12,
@@ -63,7 +63,7 @@ class TradingChart {
             },
             watermark: {
                 text: 'Deriv',
-                color: 'rgba(255, 255, 255, 0.04)',
+                color: 'rgba(0, 0, 0, 0.03)',
                 fontSize: 60,
                 visible: true,
             },
