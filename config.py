@@ -9,7 +9,7 @@ class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production")
 
     # Deriv API Configuration
-    DERIV_APP_ID = os.getenv("DERIV_APP_ID", "")
+    DERIV_APP_ID = os.getenv("DERIV_APP_ID", "1089")  # 1089 is Deriv's official app ID
     DERIV_API_TOKEN = os.getenv("DERIV_API_TOKEN", "")
     DERIV_ENDPOINT = "wss://ws.derivws.com/websockets/v3?app_id="
 
