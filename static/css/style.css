@@ -1,0 +1,125 @@
+/* Trading Dashboard Custom Styles */
+
+/* General */
+body {
+    background-color: #1a1a2e;
+    min-height: 100vh;
+}
+
+/* Chart Area */
+#chartContainer {
+    background: #0d1117;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+/* Timeframe Buttons */
+.timeframe-btn.active {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+    color: white;
+}
+
+/* Trading Panel */
+#signalCard {
+    transition: all 0.3s ease;
+}
+
+#signalCard.buy-signal {
+    border-color: #198754 !important;
+    box-shadow: 0 0 10px rgba(25, 135, 84, 0.3);
+}
+
+#signalCard.sell-signal {
+    border-color: #dc3545 !important;
+    box-shadow: 0 0 10px rgba(220, 53, 69, 0.3);
+}
+
+/* Signal Badge */
+.signal-badge {
+    font-size: 1.2rem;
+    padding: 0.5rem 1.5rem;
+    border-radius: 50px;
+}
+
+/* TDI Progress Bar */
+#tdiProgress {
+    transition: width 0.5s ease;
+}
+
+/* Positions List */
+.position-item {
+    border-bottom: 1px solid #2a2a3e;
+    padding: 0.5rem 0;
+}
+
+.position-item:last-child {
+    border-bottom: none;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1a1a2e;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #3a3a5e;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #5a5a7e;
+}
+
+/* Drawing Tool Active */
+.drawing-tool-active {
+    background-color: #0d6efd !important;
+    border-color: #0d6efd !important;
+    color: white !important;
+}
+
+/* Price Line Colors */
+.price-up {
+    color: #22ab94;
+}
+
+.price-down {
+    color: #f23645;
+}
+
+/* Card Style */
+.card {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.card-header {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+/* Toast override */
+.toast {
+    min-width: 250px;
+}
+
+/* Animation for signal flash */
+@keyframes signalPulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+.signal-active {
+    animation: signalPulse 1s ease-in-out 3;
+}
+
+/* Responsive adjustments */
+@media (max-width: 992px) {
+    .col-lg-3 {
+        margin-top: 1rem;
+    }
+}

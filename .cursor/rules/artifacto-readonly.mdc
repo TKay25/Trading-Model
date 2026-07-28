@@ -1,0 +1,42 @@
+---
+description: Protect artifacts/ and agent rules from accidental agent edits
+alwaysApply: true
+---
+
+# READ-ONLY ZONES — agent must never write here
+
+These directories and files are managed exclusively by the Artifacto plugin and the project owner.
+The agent is a reader only.
+
+## Absolute rules — no exceptions
+
+### artifacts/
+- NEVER create, edit, delete, move, or rename any file inside `artifacts/`
+- NEVER reformat or restructure artifact JSON files
+- NEVER suggest code that writes to `artifacts/`
+- Artifacts are updated by the plugin automatically when source files change
+
+### .cursor/rules/
+- NEVER create, edit, or delete any `.mdc` rule file
+- NEVER modify `artifacto-core.mdc`, `artifacto-agent-control.mdc`, `artifacto-readonly.mdc`, `artifacto-workflow.mdc`, `artifacto-disclosure.mdc`, `artifacto-catalog.mdc`, or `artifacto-auto-agent-control.mdc`
+- Rules are managed by the Artifacto plugin and the project owner only
+
+### CLAUDE.md
+- NEVER edit or overwrite `CLAUDE.md`
+- This file is maintained by the project owner
+
+## Update flow — only this is allowed
+
+```
+Source file changes → Artifacto plugin detects → plugin updates artifact
+```
+
+The agent never initiates artifact updates. The plugin handles this automatically.
+
+## If an artifact seems wrong or outdated
+
+Tell the user exactly this:
+> "The artifact for `<module>` may be outdated.
+> Please click **⟳ Refresh** in the status bar (Artifacto: Quick Refresh)."
+
+Do NOT edit the artifact yourself. Do NOT edit the rules to "fix" the behavior.

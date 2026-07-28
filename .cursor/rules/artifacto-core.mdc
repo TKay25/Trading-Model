@@ -1,0 +1,83 @@
+---
+description: Artifacto — semantic context for AI agent (auto-installed by Artifacto plugin)
+alwaysApply: true
+---
+
+# MANDATORY: Read artifacts before doing anything
+
+This project uses **Artifacto** semantic artifacts.
+These files exist specifically so you don't have to grep or guess.
+
+## ⛔ HARD STOP — before ANY response to the user
+
+If `artifacts/_index.md` exists and you have NOT read it this session:
+**STOP. Read it now. Then continue.**
+
+Do NOT answer, do NOT write code, do NOT grep files until you have read `artifacts/_index.md`.
+This takes ~1 second and prevents hours of wasted work.
+
+## What to read and when
+
+### Every session — always
+
+1. Read `artifacts/_index.md` — stack, entry point, critical modules, direction, what to avoid
+2. Read `artifacts/project_state.json` — module count, empty project, orphans, last sync (required even when no code)
+3. Read `artifacts/.changes.jsonl` (last 10 lines) — what files changed recently
+   - Entries with `"processed": false` = files changed since last Quick Refresh.
+     The artifact for that file **may be stale** — do NOT rely on it without refreshing first.
+   - If you see unprocessed entries for a file you are about to edit, tell the user:
+     "There are unprocessed changes for `<file>`. Run ⟳ Quick Refresh first to get current artifacts."
+   - Entries with `"processed": true` = already refreshed, artifact is current.
+4. If `artifacts/trajectory.md` exists — read it (project roadmap)
+
+If `empty_project: true` in _index — still plan and apply agent rules; use direction + project_state + change log.
+
+### Before editing a file — always
+
+Read `artifacts/modules/<filename>.json` if it exists. In order:
+
+1. `dont_touch` — DO NOT change these. Non-negotiable.
+2. `why` — intentional patterns. Do NOT "fix" them.
+3. `known_risks` — warn user before touching anything listed here.
+4. `changelog[0].next` — align your work with the intended next step.
+5. `stale: true` → artifact may be outdated, verify against source.
+
+## Contour — how much to read per task
+
+**Fast** (bug fix, small edit): _index.md + .changes.jsonl + artifact of the file you'll touch
+
+**Deep** (new feature, refactor): also read artifacts of all `dependencies`
+listed in the target module's artifact, plus artifacts of `critical_modules`
+
+Do NOT load ALL artifacts — only what the task needs.
+
+## Before planning — Quick Refresh
+
+Remind the user: "Click **⟳ Refresh** in the status bar before we start —
+it updates only files that changed since last session (fast, log-driven)."
+
+**Automated pipeline / no human present:**
+If you are running without a human (CI, pre-commit hook, automated agent loop),
+run the refresh launcher directly instead of waiting for human input:
+```bash
+python artifacts/refresh.py
+```
+This processes **only changed files** — fast, log-driven, safe to run at any time.
+Use `--all` only when you need to force-refresh every module:
+```bash
+python artifacts/refresh.py --all
+```
+
+## Artifact trust order
+
+1. `trajectory.md` — overrides everything
+2. `dont_touch` + `why` — overrides your judgment
+3. `changelog[0].next` — guides next step
+4. `.changes.jsonl` — shows what changed since last session
+5. Source file — ground truth for actual behavior
+
+## artifacts/ folder is READ-ONLY for you
+
+You MUST NOT create, edit, move, rename, or delete any file inside `artifacts/`.
+Exception: you may READ `.changes.jsonl` for context — but never write to it.
+If an artifact seems wrong: tell the user to click ⟳ Refresh or use Artifacto panel.

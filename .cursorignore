@@ -1,0 +1,5 @@
+# Artifacto — exclude change log from AI semantic indexing
+# modules/*.json are intentionally readable by the agent via explicit Read calls
+# _index.md and trajectory.md are also indexed — they enhance semantic search.
+artifacts/.changes.jsonl
+artifacts/catalog.jsonl

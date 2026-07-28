@@ -1,0 +1,11 @@
+{
+    "files.exclude": {
+        "**/artifacts": true
+    },
+    "search.exclude": {
+        "**/artifacts": true
+    },
+    "files.readonlyInclude": {
+        "**/artifacts": true
+    }
+}

@@ -1,0 +1,6 @@
+# Artifacto — generated semantic artifacts (auto-updated by plugin)
+artifacts/
+
+# Environment files with secrets
+.env
+**/.env

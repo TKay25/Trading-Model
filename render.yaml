@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: trading-dashboard
+    runtime: python
+    repo: https://github.com/yourusername/your-repo-name
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 2 --worker-class sync --timeout 120 --bind 0.0.0.0:$PORT
+    envVars:
+      - key: FLASK_DEBUG
+        value: "0"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DERIV_APP_ID
+        sync: false
+      - key: DERIV_API_TOKEN
+        sync: false
+      - key: DEFAULT_SYMBOL
+        value: R_100
+      - key: DEFAULT_TIMEFRAME
+        value: 1m

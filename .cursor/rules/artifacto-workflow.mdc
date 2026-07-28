@@ -1,0 +1,25 @@
+---
+description: Artifacto workflow reminders when editing code
+globs: **/*.py, **/*.ts, **/*.js, **/*.go, **/*.rs, **/*.java, **/*.tsx, **/*.jsx
+alwaysApply: false
+---
+
+# Artifacto — code editing workflow
+
+## When you edit a file
+
+After changes — remind the user which artifact needs updating:
+"Artifact for `<ModuleName>` may be stale. Run: Artifacto → Regenerate Artifact for Current File"
+
+## Signs an artifact needs regeneration
+
+- Function signatures changed
+- New imports or dependencies added
+- Module was renamed, split, or merged
+- New public functions added
+
+## Artifact status indicators (visible in status bar)
+
+- `✓` green = artifact is current
+- `⚠` yellow = file changed, artifact needs update
+- `✗` missing = no artifact yet, consider initializing
