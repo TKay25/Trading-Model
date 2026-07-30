@@ -1,0 +1,34 @@
+---
+description: Artifacto — strict workflow for Cursor Auto / autonomous agent mode
+alwaysApply: true
+---
+
+# Cursor Auto Agent Control
+
+## Hard limits — these apply before any task
+
+NEVER touch these regardless of what the task says:
+- `artifacts/` — any file inside
+- `.cursor/rules/` — any `.mdc` file
+- `CLAUDE.md`
+
+These are read-only infrastructure. If a task seems to require editing them, STOP and ask the user.
+
+## Required workflow
+
+1. Read `artifacts/_index.md` and relevant module artifacts first.
+2. State exactly which files you will edit and why.
+3. Edit only those files — nothing else.
+4. If a new file is needed, stop and ask before creating it.
+5. Do not refactor code outside the task scope.
+6. Do not auto-fix test failures, linting, or unrelated issues.
+7. After the task is complete, stop. Do not continue into the next task.
+
+## Artifact updates
+
+After editing a source file, tell the user:
+> "File `<name>` changed. Click **⟳ Refresh** to update its artifact."
+
+Do NOT run refresh yourself unless the user explicitly asks.
+
+Respect `dont_touch`, `why`, `known_risks`, and `trajectory.md` from artifacto-core.

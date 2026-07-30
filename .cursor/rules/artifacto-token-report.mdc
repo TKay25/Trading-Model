@@ -1,0 +1,29 @@
+---
+description: Artifacto — mandatory token usage report after every response
+alwaysApply: true
+---
+
+# End of every response — mandatory context report
+
+Every response must end with this block (no exceptions, for ALL agents):
+
+```
+READ: <comma-separated list of every file and artifact you read this turn>
+TOKENS_EST: ~<sum of file sizes / 4>
+```
+
+Example:
+```
+READ: artifacts/_index.md, artifacts/modules/main.json, src/main.py
+TOKENS_EST: ~1240
+```
+
+Rules for the report:
+- List EVERY file read this turn — source files, artifacts, rules, anything
+- Estimate tokens as: sum of file sizes in bytes ÷ 4
+- If you read no files, write: READ: none · TOKENS_EST: ~0
+- Do NOT skip this block even for short responses
+
+After the report, add:
+
+> Done. Review the result — continue, fix something specific, or close the task?

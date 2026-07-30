@@ -1,0 +1,36 @@
+---
+description: Artifacto — use catalog search instead of grepping data files
+alwaysApply: true
+---
+
+# File catalog search (mandatory for data / unknown paths)
+
+This project has `artifacts/catalog.jsonl` — a machine index of all tracked files.
+Do NOT load the whole catalog into context. Use the search script.
+
+## When to run search
+
+Before opening files under `data/`, or when the task mentions a filename you do not see in `critical_modules`:
+
+```bash
+python artifacts/search.py <keywords from the task>
+```
+
+Examples:
+- `python artifacts/search.py init.ts`
+- `python artifacts/search.py --query "безпровідні навушники"` (UA/EN, ignores stopwords)
+- `python artifacts/search.py --path data/levels/L042.json`
+- `python artifacts/search.py --kind code`
+
+Search uses stemming (навушник/навушники), not exact string match. Marketplace/question words are filtered.
+
+## After search
+
+- Open ONLY paths listed under **READ**
+- For `use_artifact` / `code` — read `artifacts/modules/*.json`, not the whole repo
+- For `pointer` / `trivial` — do NOT open the source JSON; use the summary line
+- For `bulk` / `skip` — do NOT open
+
+Do NOT run repo-wide grep for JSON discovery if search covers the task.
+
+After Quick Refresh, catalog is current — trust search output for paths and policies.

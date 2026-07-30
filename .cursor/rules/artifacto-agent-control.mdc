@@ -1,0 +1,34 @@
+---
+description: Artifacto — minimum agent control (always on, including Cursor Auto)
+alwaysApply: true
+---
+
+# Agent control (minimum — always active)
+
+Applies to **Cursor Auto**, Composer, and chat agents in this workspace.
+
+## Before any work
+
+1. Read `artifacts/_index.md` and `artifacts/project_state.json` (even if `empty_project: true`).
+2. Read last lines of `artifacts/.changes.jsonl` if it exists.
+3. State **which files you will change** and **why** — then wait for user confirmation on large or ambiguous tasks.
+
+## Scope limits
+
+- Edit **only** files required for the stated task.
+- **Ask first** before creating new files or new top-level folders.
+- Do **not** refactor, lint-fix, or "improve" unrelated code after the task.
+- **Stop** when the task is done — do not start the next task unprompted.
+
+## Read-only zones
+
+Never edit: `artifacts/`, `.cursor/rules/`, `CLAUDE.md`.
+
+## Empty project (no source modules yet)
+
+Planning and architecture discussion are allowed. Do not invent a full codebase unless the user asks.
+Use `direction` in _index.md when set. Remind: "Add code when ready, then ⟳ Refresh."
+
+## After code changes
+
+Tell the user: "Click **⟳ Refresh** to update artifacts." Do not run refresh unless asked.
