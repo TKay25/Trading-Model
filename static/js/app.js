@@ -76,12 +76,9 @@ class TradingDashboardApp {
      * Load initial chart data on page load.
      */
     async _loadInitialData() {
-        // Use demo/simulated data if no Deriv connection
-        this._loadDemoData();
+        // Load real market data from Deriv first (no dummy data on startup)
+        await this._loadChartData();
         this._runAnalysis();
-
-        // Try to load real data
-        this._loadChartData();
     }
 
     /**
@@ -106,24 +103,51 @@ class TradingDashboardApp {
             if (data.success && data.candles && data.candles.length > 0) {
                 this.candles = data.candles;
                 this.chart.setCandleData(data.candles);
+                this._setChartStatus('live');
                 this._runAnalysis();
             } else {
-                // Fall back to demo data
-                console.warn('No candle data from API, using demo data');
-                this._loadDemoData();
+                // Server is reachable but Deriv returned no data
+                console.warn('No candle data from API:', data.error || 'empty response');
+                this._setChartStatus('error', data.error || 'No data returned by Deriv');
+                this.candles = [];
+                this.chart.clearChart();
             }
         } catch (err) {
-            console.warn('Failed to fetch candle data:', err);
-            this._loadDemoData();
+            // Only if the server itself is unreachable do we fall back to demo data
+            console.warn('Failed to fetch candle data, using demo data:', err);
+            this._loadDemoData(true);
         } finally {
             this.chartLoading.classList.add('d-none');
         }
     }
 
     /**
+     * Show a status banner above the chart.
+     * mode: 'live' (hide banner) | 'demo' | 'error'
+     */
+    _setChartStatus(mode, message = '') {
+        const banner = document.getElementById('chartStatus');
+        if (!banner) return;
+
+        if (mode === 'live') {
+            banner.classList.add('d-none');
+            return;
+        }
+
+        banner.classList.remove('d-none');
+        if (mode === 'demo') {
+            banner.className = 'chart-status demo';
+            banner.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> Showing demo data — live Deriv feed unavailable';
+        } else {
+            banner.className = 'chart-status error';
+            banner.innerHTML = `<i class="bi bi-x-circle-fill"></i> ${message || 'Failed to load market data'}`;
+        }
+    }
+
+    /**
      * Generate demo candle data for offline mode.
      */
-    _loadDemoData() {
+    _loadDemoData(forceDemo = false) {
         const candles = [];
         const now = Math.floor(Date.now() / 1000);
         const interval = this._getTimeframeSeconds(this.timeframe);
@@ -153,6 +177,9 @@ class TradingDashboardApp {
 
         this.candles = candles;
         this.chart.setCandleData(candles);
+        if (forceDemo) {
+            this._setChartStatus('demo');
+        }
     }
 
     _getTimeframeSeconds(tf) {

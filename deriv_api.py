@@ -19,16 +19,31 @@ class DerivAPI:
         self._ws = None
         self._authenticated = False
         self._pending_requests = {}
+        self._listen_task = None
+        self._request_counter = 0
 
-    async def connect(self):
+    async def connect(self, timeout: float = 20.0):
         """Establish WebSocket connection to Deriv."""
         try:
-            self._ws = await websockets.connect(self.ws_url)
+            self._ws = await asyncio.wait_for(
+                websockets.connect(self.ws_url, ping_interval=20, ping_timeout=20),
+                timeout=timeout
+            )
             logger.info("Connected to Deriv WebSocket API")
 
+            # Start the background listener that routes responses to pending requests.
+            # Without this, _send_request() would wait forever.
+            self._listen_task = asyncio.ensure_future(self._listen())
+
             if self.api_token:
-                await self.authenticate()
+                ok = await self.authenticate()
+                if not ok:
+                    logger.warning("Authentication failed with the provided token")
+
             return True
+        except asyncio.TimeoutError:
+            logger.error("Timed out connecting to Deriv WebSocket API")
+            return False
         except Exception as e:
             logger.error(f"Failed to connect to Deriv: {e}")
             return False
@@ -43,10 +58,19 @@ class DerivAPI:
             "authorize": self.api_token
         }
         response = await self._send_request(auth_req)
-        if response.get("msg_type") == "authorize":
+
+        # NOTE: Deriv returns msg_type "authorize" on BOTH success and failure,
+        # so we must confirm there's no error and the "authorize" payload exists.
+        if (response.get("msg_type") == "authorize"
+                and "error" not in response
+                and "authorize" in response):
             self._authenticated = True
-            logger.info(f"Authenticated as {response.get('authorize', {}).get('loginid', 'unknown')}")
+            loginid = response.get("authorize", {}).get("loginid", "unknown")
+            logger.info(f"Authenticated as {loginid}")
             return True
+
+        err = response.get("error", {}).get("message", str(response))
+        logger.error(f"Authentication failed: {err}")
         return False
 
     async def get_ticks(self, symbol: str, count: int = 100):
@@ -56,7 +80,6 @@ class DerivAPI:
             "adjust_start_time": 1,
             "count": count,
             "end": "latest",
-            "start": 1,
             "style": "ticks"
         }
         return await self._send_request(ticks_req)
@@ -74,7 +97,6 @@ class DerivAPI:
             "adjust_start_time": 1,
             "count": count,
             "end": "latest",
-            "start": 1,
             "style": "candles",
             "granularity": granularity
         }
@@ -160,28 +182,38 @@ class DerivAPI:
         req = {"balance": 1}
         return await self._send_request(req)
 
-    async def _send_request(self, request: dict) -> dict:
-        """Send a request and wait for the response."""
+    async def _send_request(self, request: dict, timeout: float = 20.0) -> dict:
+        """Send a request and wait for the response.
+
+        The response is routed back by the background _listen() task, so this
+        method just waits on the future with a timeout.
+        """
         if not self._ws:
             raise ConnectionError("WebSocket not connected. Call connect() first.")
 
-        req_id = str(id(request))
+        self._request_counter += 1
+        req_id = self._request_counter  # Deriv requires req_id to be an integer
         request["req_id"] = req_id
 
         # Set up future for this request
-        future = asyncio.get_event_loop().create_future()
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
         self._pending_requests[req_id] = future
 
         try:
             await self._ws.send(json.dumps(request))
-            # Wait for matching response
-            response = await future
+            # Wait for matching response (with timeout so we never hang forever)
+            response = await asyncio.wait_for(future, timeout=timeout)
             return json.loads(response) if isinstance(response, str) else response
+        except asyncio.TimeoutError:
+            raise ConnectionError(
+                f"Timeout waiting for Deriv response to request {req_id}"
+            ) from None
         finally:
             self._pending_requests.pop(req_id, None)
 
     async def _listen(self):
-        """Listen for incoming messages and route to pending requests."""
+        """Listen for incoming messages and route them to pending requests."""
         if not self._ws:
             return
 
@@ -189,18 +221,40 @@ class DerivAPI:
             async for message in self._ws:
                 data = json.loads(message)
                 req_id = data.get("req_id")
-                if req_id and req_id in self._pending_requests:
-                    self._pending_requests[req_id].set_result(message)
+                if req_id is not None and req_id in self._pending_requests:
+                    future = self._pending_requests.pop(req_id, None)
+                    if future and not future.done():
+                        future.set_result(message)
                 elif data.get("msg_type") == "tick":
                     # Handle real-time tick updates
                     pass  # Will be used for live chart updates
         except websockets.exceptions.ConnectionClosed:
             logger.warning("Deriv WebSocket connection closed")
+        except Exception as e:
+            logger.error(f"Deriv listener error: {e}")
+        finally:
+            # Fail any requests still waiting so they don't hang
+            for future in self._pending_requests.values():
+                if not future.done():
+                    future.set_exception(ConnectionError("Deriv WebSocket connection closed"))
+            self._pending_requests.clear()
 
     async def close(self):
         """Close the WebSocket connection."""
+        if self._listen_task:
+            self._listen_task.cancel()
+            try:
+                await self._listen_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._listen_task = None
+
         if self._ws:
-            await self._ws.close()
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
             self._ws = None
-            self._authenticated = False
-            logger.info("Deriv WebSocket connection closed")
+
+        self._authenticated = False
+        logger.info("Deriv WebSocket connection closed")

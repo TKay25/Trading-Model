@@ -258,6 +258,36 @@ body {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.chart-status {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: var(--shadow);
+    max-width: calc(100% - 24px);
+    text-align: center;
+}
+
+.chart-status.demo {
+    background: #fff8e1;
+    color: #8a6d00;
+    border: 1px solid #f0d77b;
+}
+
+.chart-status.error {
+    background: #fdecea;
+    color: #c62828;
+    border: 1px solid #f5c2c0;
+}
+
 /* ============ SIDEBAR ============ */
 .sidebar {
     display: flex;

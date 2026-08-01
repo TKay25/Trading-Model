@@ -20,18 +20,37 @@ app = Flask(__name__)
 app.config.from_object(Config)
 
 # Global service instances
-deriv_api: DerivAPI = None
 trading_service: TradingService = None
 
 
 def init_services():
-    """Initialize API and trading services."""
-    global deriv_api, trading_service
-    deriv_api = DerivAPI(
-        app_id=Config.DERIV_APP_ID,
-        api_token=Config.DERIV_API_TOKEN
-    )
+    """Initialize the trading service."""
+    global trading_service
     trading_service = TradingService(symbol=Config.DEFAULT_SYMBOL)
+
+
+def _deriv_call(coro_factory, token=None):
+    """Open a fresh Deriv WebSocket connection, run coro_factory(api), and clean up.
+
+    Each request gets its own event loop and connection so that a slow or
+    failed request can never poison the next one.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    api = DerivAPI(
+        app_id=Config.DERIV_APP_ID,
+        api_token=token if token is not None else Config.DERIV_API_TOKEN
+    )
+    try:
+        if not loop.run_until_complete(api.connect()):
+            raise ConnectionError("Could not connect to the Deriv WebSocket API")
+        return loop.run_until_complete(coro_factory(api))
+    finally:
+        try:
+            loop.run_until_complete(api.close())
+        except Exception:
+            pass
+        loop.close()
 
 
 # Initialize on startup (needed for gunicorn/production)
@@ -50,7 +69,7 @@ def index():
         timeframes=list(Config.TIMEFRAMES.keys()),
         default_symbol=Config.DEFAULT_SYMBOL,
         default_timeframe=Config.DEFAULT_TIMEFRAME,
-        connected=deriv_api is not None
+        connected=bool(Config.DERIV_API_TOKEN)
     )
 
 
@@ -79,30 +98,25 @@ def connect():
         }), 400
 
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        api = DerivAPI(app_id=Config.DERIV_APP_ID, api_token=token)
-        connected = loop.run_until_complete(api.connect())
-        if connected and api._authenticated:
-            # Fetch balance to confirm
-            balance_data = loop.run_until_complete(api.get_balance())
-            loop.run_until_complete(api.close())
-            loop.close()
-
+        async def _connect(api):
+            if not api._authenticated:
+                return None  # authentication failed
+            # Fetch balance to confirm the account is live
+            balance_data = await api.get_balance()
             balance = balance_data.get("balance", {})
-            return jsonify({
-                "success": True,
+            return {
                 "loginid": balance.get("loginid", "unknown"),
                 "balance": float(balance.get("balance", 0)),
                 "currency": balance.get("currency", "USD"),
-            })
-        else:
-            loop.run_until_complete(api.close())
-            loop.close()
+            }
+
+        result = _deriv_call(_connect, token=token)
+        if result is None:
             return jsonify({
                 "success": False,
                 "error": "Authentication failed. Check your API token."
             }), 401
+        return jsonify({"success": True, **result})
     except Exception as e:
         logger.error(f"Connection error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -118,15 +132,11 @@ def get_candles():
     )
     count = data.get("count", 100)
 
+    async def _fetch(api):
+        return await api.get_candles(symbol, granularity, count)
+
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(deriv_api.connect())
-        result = loop.run_until_complete(
-            deriv_api.get_candles(symbol, granularity, count)
-        )
-        loop.run_until_complete(deriv_api.close())
-        loop.close()
+        result = _deriv_call(_fetch)
 
         if "candles" in result:
             candles = result["candles"]
@@ -149,16 +159,11 @@ def analyze():
     )
     count = data.get("count", 100)
 
+    async def _fetch(api):
+        return await api.get_candles(symbol, granularity, count)
+
     try:
-        # Fetch candles
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(deriv_api.connect())
-        result = loop.run_until_complete(
-            deriv_api.get_candles(symbol, granularity, count)
-        )
-        loop.run_until_complete(deriv_api.close())
-        loop.close()
+        result = _deriv_call(_fetch)
 
         if "candles" not in result:
             return jsonify({"success": False, "error": "No candle data"}), 400
@@ -245,15 +250,11 @@ def place_trade():
     amount = lot_size  # lot size maps directly to stake for volatility indices
     contract_type = "CALL" if direction == "BUY" else "PUT"
 
+    async def _trade(api):
+        return await api.buy_contract(symbol, amount, contract_type, 1, "t")
+
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(deriv_api.connect())
-        result = loop.run_until_complete(
-            deriv_api.buy_contract(symbol, amount, contract_type, 1, "t")
-        )
-        loop.run_until_complete(deriv_api.close())
-        loop.close()
+        result = _deriv_call(_trade)
 
         if "buy" in result:
             return jsonify({
@@ -280,14 +281,11 @@ def sell_contract():
     if not contract_id:
         return jsonify({"success": False, "error": "contract_id required"}), 400
 
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(deriv_api.connect())
-        result = loop.run_until_complete(deriv_api.sell_contract(contract_id))
-        loop.run_until_complete(deriv_api.close())
-        loop.close()
+    async def _sell(api):
+        return await api.sell_contract(contract_id)
 
+    try:
+        result = _deriv_call(_sell)
         return jsonify({"success": True, "result": result})
 
     except Exception as e:
@@ -301,14 +299,11 @@ def get_balance():
     if not Config.DERIV_API_TOKEN:
         return jsonify({"success": False, "error": "No API token configured"}), 400
 
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(deriv_api.connect())
-        result = loop.run_until_complete(deriv_api.get_balance())
-        loop.run_until_complete(deriv_api.close())
-        loop.close()
+    async def _balance(api):
+        return await api.get_balance()
 
+    try:
+        result = _deriv_call(_balance)
         return jsonify({"success": True, "balance": result})
 
     except Exception as e:
@@ -322,14 +317,11 @@ def get_portfolio():
     if not Config.DERIV_API_TOKEN:
         return jsonify({"success": False, "error": "No API token configured"}), 400
 
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(deriv_api.connect())
-        result = loop.run_until_complete(deriv_api.get_portfolio())
-        loop.run_until_complete(deriv_api.close())
-        loop.close()
+    async def _portfolio(api):
+        return await api.get_portfolio()
 
+    try:
+        result = _deriv_call(_portfolio)
         return jsonify({"success": True, "portfolio": result})
 
     except Exception as e:

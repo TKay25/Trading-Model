@@ -125,6 +125,20 @@ class TradingChart {
     }
 
     /**
+     * Clear all candle data from the chart.
+     */
+    clearChart() {
+        if (this.candleSeries) {
+            this.candleSeries.setData([]);
+        }
+        if (this.volumeSeries) {
+            this.volumeSeries.setData([]);
+        }
+        this.clearDrawings();
+        this.data = [];
+    }
+
+    /**
      * Add a simple trendline drawing.
      */
     addTrendline(startPoint, endPoint, color = '#0d6efd') {
