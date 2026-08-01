@@ -29,17 +29,22 @@ def init_services():
     trading_service = TradingService(symbol=Config.DEFAULT_SYMBOL)
 
 
-def _deriv_call(coro_factory, token=None):
+def _deriv_call(coro_factory, token=None, authenticated=False):
     """Open a fresh Deriv WebSocket connection, run coro_factory(api), and clean up.
 
     Each request gets its own event loop and connection so that a slow or
-    failed request can never poison the next one.
+    failed request can never poison the next one. When authenticated=True, the
+    token priority is: explicit token > this session's connected token >
+    DERIV_API_TOKEN (.env). Public endpoints (candles/analyze) pass no token.
     """
+    effective_token = ""
+    if authenticated:
+        effective_token = token or session.get("deriv_api_token") or Config.DERIV_API_TOKEN
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     api = DerivAPI(
         app_id=Config.DERIV_APP_ID,
-        api_token=token if token is not None else Config.DERIV_API_TOKEN
+        api_token=effective_token
     )
     try:
         if not loop.run_until_complete(api.connect()):
@@ -110,16 +115,27 @@ def connect():
                 "currency": balance.get("currency", "USD"),
             }
 
-        result = _deriv_call(_connect, token=token)
+        result = _deriv_call(_connect, token=token, authenticated=True)
         if result is None:
             return jsonify({
                 "success": False,
                 "error": "Authentication failed. Check your API token."
             }), 401
+
+        # Remember the working token for this browser session so that
+        # trade/balance/portfolio calls keep using it (even if .env is stale).
+        session["deriv_api_token"] = token
         return jsonify({"success": True, **result})
     except Exception as e:
         logger.error(f"Connection error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/disconnect", methods=["POST"])
+def disconnect():
+    """Forget the connected token for this session."""
+    session.pop("deriv_api_token", None)
+    return jsonify({"success": True})
 
 
 @app.route("/api/candles", methods=["POST"])
@@ -254,7 +270,7 @@ def place_trade():
         return await api.buy_contract(symbol, amount, contract_type, 1, "t")
 
     try:
-        result = _deriv_call(_trade)
+        result = _deriv_call(_trade, authenticated=True)
 
         if "buy" in result:
             return jsonify({
@@ -285,7 +301,7 @@ def sell_contract():
         return await api.sell_contract(contract_id)
 
     try:
-        result = _deriv_call(_sell)
+        result = _deriv_call(_sell, authenticated=True)
         return jsonify({"success": True, "result": result})
 
     except Exception as e:
@@ -303,7 +319,7 @@ def get_balance():
         return await api.get_balance()
 
     try:
-        result = _deriv_call(_balance)
+        result = _deriv_call(_balance, authenticated=True)
         return jsonify({"success": True, "balance": result})
 
     except Exception as e:
@@ -321,7 +337,7 @@ def get_portfolio():
         return await api.get_portfolio()
 
     try:
-        result = _deriv_call(_portfolio)
+        result = _deriv_call(_portfolio, authenticated=True)
         return jsonify({"success": True, "portfolio": result})
 
     except Exception as e:

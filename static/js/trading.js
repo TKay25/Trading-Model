@@ -54,34 +54,39 @@ class TradingControls {
      */
     async _toggleConnection() {
         if (this.authenticated) {
+            // Disconnect: also clear the server-side session token
             this.authenticated = false;
             this.apiToken = '';
             this._updateConnectionUI(false);
+            try {
+                await fetch('/api/disconnect', { method: 'POST' });
+            } catch (_) {}
             this._showToast('Disconnected', 'Disconnected from Deriv API');
             return;
         }
 
-        // Check if backend already has a token (from .env)
-        let token = '';
+        // Check if the backend has a token configured (from .env)
+        let hasEnvToken = false;
         try {
             const configRes = await fetch('/api/config');
             const config = await configRes.json();
-            if (config.has_token) {
-                token = '__env__';  // signal to use server-side token
-            }
+            hasEnvToken = !!config.has_token;
         } catch (_) {}
 
-        // If no .env token, prompt the user
-        if (!token) {
-            token = prompt(
-                'Enter your Deriv API Token:\n(Get it from deriv.com > Settings > API Token > Create Token with "Read" + "Trade" scopes)'
-            );
-            if (!token || token.trim() === '') return;
-            this.apiToken = token.trim();
-        } else {
-            this.apiToken = '';  // server will use .env token
+        // Always let the user enter a token. Leaving it blank uses the .env token.
+        const hint = hasEnvToken
+            ? 'Leave blank to use the token in .env, or paste a new Deriv API token.'
+            : 'Enter your Deriv API token (deriv.com \u2192 Settings \u2192 API Token, scopes: Read + Trade).';
+        const entered = await this._promptForToken(hint);
+        if (entered === null) return;  // user cancelled
+
+        const trimmed = entered.trim();
+        if (!trimmed && !hasEnvToken) {
+            this._showToast('No Token', 'Enter an API token or set DERIV_API_TOKEN in .env');
+            return;
         }
 
+        this.apiToken = trimmed;  // '' means "use the .env token"
         this._showToast('Connecting', 'Connecting to Deriv API...');
 
         try {
@@ -112,6 +117,47 @@ class TradingControls {
             this._showToast('Connection Error', 'Failed to connect: ' + err.message);
             this._updateConnectionUI(false);
         }
+    }
+
+    /**
+     * Show the token input modal and resolve with the entered value.
+     * Resolves with null if the user cancels/dismisses the modal.
+     */
+    _promptForToken(hint) {
+        return new Promise((resolve) => {
+            const modalEl = document.getElementById('tokenModal');
+            const input = document.getElementById('tokenModalInput');
+            const hintEl = document.getElementById('tokenModalHint');
+            const okBtn = document.getElementById('tokenModalOk');
+
+            hintEl.textContent = hint;
+            input.value = '';
+
+            const onOk = () => finish(input.value);
+            const onHidden = () => finish(null);
+            const onKey = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    onOk();
+                }
+            };
+
+            let done = false;
+            const finish = (value) => {
+                if (done) return;
+                done = true;
+                const modal = bootstrap.Modal.getInstance(modalEl);
+                if (modal) modal.hide();
+                resolve(value);
+            };
+
+            okBtn.addEventListener('click', onOk, { once: true });
+            modalEl.addEventListener('hidden.bs.modal', onHidden, { once: true });
+            input.addEventListener('keydown', onKey, { once: true });
+            modalEl.addEventListener('shown.bs.modal', () => input.focus(), { once: true });
+
+            bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        });
     }
 
     _updateConnectionUI(connected) {

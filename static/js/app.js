@@ -296,30 +296,28 @@ class TradingDashboardApp {
         const icon = isBuy ? 'bi-arrow-up-short' : 'bi-arrow-down-short';
         const cardClass = isBuy ? 'buy-signal' : 'sell-signal';
 
-        this.signalBadge.innerHTML = `
+        this.decisionBadge.innerHTML = `
             <span class="badge ${badgeClass} signal-badge signal-active">
                 <i class="bi ${icon}"></i> ${signal.action}
             </span>
         `;
 
-        this.signalDetails.innerHTML = `
-            <div class="mt-2">
-                <div class="d-flex justify-content-between">
-                    <span class="text-secondary">Confidence:</span>
-                    <span class="fw-bold">${(signal.confidence * 100).toFixed(0)}%</span>
-                </div>
-                <div class="d-flex justify-content-between">
-                    <span class="text-secondary">Stop Loss:</span>
-                    <span class="fw-bold text-danger">$${signal.stop_loss ? signal.stop_loss.toFixed(2) : '--'}</span>
-                </div>
-                <div class="d-flex justify-content-between">
-                    <span class="text-secondary">Take Profit:</span>
-                    <span class="fw-bold text-success">$${signal.take_profit ? signal.take_profit.toFixed(2) : '--'}</span>
-                </div>
-                <hr class="my-1">
-                <small class="text-secondary">${signal.reason || ''}</small>
+        this.decisionSummary.innerHTML = `
+            <div class="d-flex justify-content-between">
+                <span class="text-secondary">Confidence:</span>
+                <span class="fw-bold">${(signal.confidence * 100).toFixed(0)}%</span>
+            </div>
+            <div class="d-flex justify-content-between">
+                <span class="text-secondary">Stop Loss:</span>
+                <span class="fw-bold text-danger">$${signal.stop_loss ? signal.stop_loss.toFixed(2) : '--'}</span>
+            </div>
+            <div class="d-flex justify-content-between">
+                <span class="text-secondary">Take Profit:</span>
+                <span class="fw-bold text-success">$${signal.take_profit ? signal.take_profit.toFixed(2) : '--'}</span>
             </div>
         `;
+
+        this.decisionReason.innerHTML = signal.reason || '';
 
         this.signalCard.className = `card bg-dark border-secondary mb-3 ${cardClass}`;
 

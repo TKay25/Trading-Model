@@ -288,6 +288,17 @@ body {
     border: 1px solid #f5c2c0;
 }
 
+/* ============ TOKEN MODAL ============ */
+.modal-content {
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+}
+.modal-title i { color: var(--accent); margin-right: 4px; }
+#tokenModalInput:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 0.2rem rgba(41, 98, 255, 0.15);
+}
+
 /* ============ SIDEBAR ============ */
 .sidebar {
     display: flex;
