@@ -99,6 +99,18 @@ class DerivAPI:
     # ------------------------------------------------------------------
     # Connection (new API)
     # ------------------------------------------------------------------
+    async def get_authenticated_ws_url(self) -> str:
+        """Run the REST OTP flow and return the account-scoped WebSocket URL.
+
+        Requires app_id + PAT token. Reuses get-accounts -> pick demo/real ->
+        POST /otp. The returned URL embeds a single-use OTP (valid 120s).
+        """
+        if not self.api_token:
+            raise ConnectionError("No API token provided for authenticated connection")
+        accounts = await self._get_accounts()
+        account_id = self._pick_account_id(accounts)
+        return await self._get_otp_ws_url(account_id)
+
     async def connect(self, timeout: float = 20.0, authenticated: bool = False):
         """Establish a WebSocket connection to Deriv.
 
@@ -110,15 +122,11 @@ class DerivAPI:
         """
         try:
             if authenticated:
-                if not self.api_token:
-                    raise ConnectionError("No API token provided for authenticated connection")
-                accounts = await self._get_accounts()
-                account_id = self._pick_account_id(accounts)
-                ws_url = await self._get_otp_ws_url(account_id)
+                ws_url = await self.get_authenticated_ws_url()
                 self._authenticated = True
                 logger.info(
-                    "Authenticated via OTP (account=%s, type=%s)",
-                    account_id, self.account_type,
+                    "Authenticated via OTP (type=%s)",
+                    self.account_type,
                 )
             else:
                 ws_url = PUBLIC_WS_URL
@@ -186,7 +194,7 @@ class DerivAPI:
     # ------------------------------------------------------------------
     async def buy_contract(self, symbol: str, amount: float, contract_type: str = "CALL",
                            duration: int = 1, duration_unit: str = "m"):
-        """Place a trade.
+        """Place a binary trade (CALL or PUT).
 
         Args:
             symbol: Trading symbol
@@ -211,15 +219,17 @@ class DerivAPI:
         return await self._send_request(buy_req)
 
     async def _buy_proposal(self, symbol: str, amount: float, contract_type: str,
-                            duration: int, duration_unit: str):
+                            duration: int, duration_unit: str, barrier: str = None):
         """Get a price proposal for a contract before buying.
 
-        New API uses `underlying_symbol` instead of legacy `symbol`.
+        New API uses `underlying_symbol` instead of legacy `symbol`. Standard
+        CALL/PUT on synthetics must NOT include a barrier (Deriv returns
+        `InvalidBarrier` otherwise); pass `barrier` only for contract types
+        that require one.
         """
         proposal_req = {
             "proposal": 1,
             "amount": amount,
-            "barrier": "+0.1",
             "basis": "stake",
             "contract_type": contract_type,
             "currency": "USD",
@@ -227,6 +237,8 @@ class DerivAPI:
             "duration_unit": duration_unit,
             "underlying_symbol": symbol
         }
+        if barrier:
+            proposal_req["barrier"] = barrier
         return await self._send_request(proposal_req)
 
     async def sell_contract(self, contract_id: str):

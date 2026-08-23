@@ -6,7 +6,7 @@ services:
     plan: free
     region: oregon
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --workers 2 --worker-class sync --timeout 120 --bind 0.0.0.0:$PORT
+    startCommand: gunicorn app:app --workers 2 --threads 4 --worker-class gthread --timeout 120 --bind 0.0.0.0:$PORT
     envVars:
       - key: FLASK_DEBUG
         value: "0"
@@ -16,7 +16,9 @@ services:
         sync: false
       - key: DERIV_API_TOKEN
         sync: false
+      - key: DERIV_ACCOUNT_TYPE
+        value: demo
       - key: DEFAULT_SYMBOL
-        value: R_100
+        value: R_75
       - key: DEFAULT_TIMEFRAME
-        value: 1m
+        value: 5m

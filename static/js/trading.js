@@ -7,8 +7,9 @@ class TradingControls {
     constructor() {
         this.apiToken = '';
         this.authenticated = false;
-        this.currentSymbol = 'R_100';
+        this.currentSymbol = 'R_75';
         this.activeContractId = null;
+        this.balanceSource = null;
 
         // DOM elements
         this.btnBuy = document.getElementById('btnBuy');
@@ -57,6 +58,9 @@ class TradingControls {
             // Disconnect: also clear the server-side session token
             this.authenticated = false;
             this.apiToken = '';
+            this._closeBalanceStream();
+            this._stopRefreshTimer();
+            if (window.app) { window.app._clearHistory(); window.app._clearPositions(); }
             this._updateConnectionUI(false);
             try {
                 await fetch('/api/disconnect', { method: 'POST' });
@@ -101,10 +105,14 @@ class TradingControls {
             if (data.success) {
                 this.authenticated = true;
                 this._updateConnectionUI(true);
+                this._connectBalanceStream();
+                this._startRefreshTimer();
+                if (window.app) { window.app._loadHistory(); window.app._loadPositions(); }
 
                 // Update account info
                 this.accountBalance.classList.remove('d-none');
                 document.getElementById('balanceValue').textContent = data.balance.toFixed(2);
+                this._updateStatBalance(data.balance);
 
                 this._showToast('Connected',
                     `Logged in as ${data.loginid} | Balance: $${data.balance.toFixed(2)}`
@@ -184,6 +192,65 @@ class TradingControls {
     }
 
     /**
+     * Open the live balance SSE stream so the balance updates as trades settle.
+     */
+    _connectBalanceStream() {
+        this._closeBalanceStream();
+        const es = new EventSource('/api/balance/stream');
+        this.balanceSource = es;
+        es.onmessage = (ev) => {
+            try {
+                const data = JSON.parse(ev.data);
+                if (data && data.balance && typeof data.balance.balance === 'number') {
+                    document.getElementById('balanceValue').textContent =
+                        data.balance.balance.toFixed(2);
+                    this._updateStatBalance(data.balance.balance);
+                }
+            } catch (err) {
+                console.warn('Bad balance SSE payload:', err);
+            }
+        };
+        // EventSource reconnects automatically on error.
+    }
+
+    _closeBalanceStream() {
+        if (this.balanceSource) {
+            this.balanceSource.close();
+            this.balanceSource = null;
+        }
+    }
+
+    /**
+     * Sync the Balance KPI tile with the current account balance.
+     */
+    _updateStatBalance(balance) {
+        const el = document.getElementById('statBalance');
+        if (el) el.textContent = '$' + (Number(balance) || 0).toFixed(2);
+        // Recompute the dollar VaR/ES tiles whenever the balance changes.
+        if (window.app && typeof window.app._refreshRiskMoney === 'function') {
+            window.app._refreshRiskMoney();
+        }
+    }
+
+    /**
+     * Periodically refresh live positions + history while connected, so
+     * live trades appear in the Trading History section and settle in place.
+     */
+    _startRefreshTimer() {
+        this._stopRefreshTimer();
+        this._refreshTimer = setInterval(() => {
+            if (window.app) { window.app._loadHistory(); window.app._loadPositions(); }
+        }, 8000);
+    }
+
+    _stopRefreshTimer() {
+        if (this._refreshTimer) {
+            clearInterval(this._refreshTimer);
+            this._refreshTimer = null;
+        }
+    }
+
+    /**
      * Open a Buy (Long) or Sell (Short) position.
      */
     async _placeTrade(direction) {
@@ -193,6 +260,7 @@ class TradingControls {
             this._showTradeStatus('Enter a valid lot size', 'warning');
             return;
         }
+        if (window.app) window.app._lastDirection = direction;
 
         this._showTradeStatus(`Opening ${direction} position...`, 'info');
         this.btnBuy.disabled = true;
@@ -218,6 +286,9 @@ class TradingControls {
                     `${direction} position opened`,
                     'success'
                 );
+                // Refresh positions AND history so the live trade shows
+                // immediately in the Trading History section.
+                if (window.app) { window.app._loadPositions(); window.app._loadHistory(); }
             } else {
                 this._showTradeStatus('Error: ' + (data.error || 'Trade failed'), 'danger');
             }

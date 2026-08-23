@@ -206,13 +206,96 @@ class PatternRecognizer:
                     "timestamp": c3.timestamp
                 })
 
+        # M (double-top) / W (double-bottom) reversal patterns
+        patterns.extend(_detect_double_patterns(candles))
+
         return patterns
+
+
+def _detect_double_patterns(candles: List[Candle]) -> List[Dict]:
+    """Detect M (double-top) and W (double-bottom) reversal patterns.
+
+    A double top (M) = two near-equal peaks with a valley between, confirmed by
+    a close below the neckline. A double bottom (W) is the mirror image.
+    """
+    patterns = []
+    n = len(candles)
+    if n < 16:
+        return patterns
+
+    w = 3  # swing window (bars each side)
+    highs = []  # (index, price)
+    lows = []
+    for i in range(w, n - w):
+        is_high = all(candles[j].high <= candles[i].high for j in range(i - w, i + w + 1))
+        is_low = all(candles[j].low >= candles[i].low for j in range(i - w, i + w + 1))
+        if is_high:
+            highs.append((i, candles[i].high))
+        if is_low:
+            lows.append((i, candles[i].low))
+
+    tol = 0.01  # 1% tolerance for matching peak/valley heights
+
+    def _record(type_, direction, c, strength):
+        """Keep only the strongest pattern per (type, confirmation bar)."""
+        for i, existing in enumerate(patterns):
+            if existing["type"] == type_ and existing["index"] == c:
+                if strength > patterns[i].get("_strength", 0):
+                    patterns[i]["_strength"] = strength
+                return
+        patterns.append({
+            "index": c, "type": type_, "direction": direction,
+            "strength": "strong", "timestamp": candles[c].timestamp,
+            "_strength": strength,
+        })
+
+    # Double Top (M)
+    for ai, (i1, p1) in enumerate(highs):
+        for i2, p2 in highs[ai + 1:]:
+            if i2 - i1 < 6:
+                continue
+            if abs(p2 - p1) > p1 * tol:
+                continue
+            neck = None
+            for li, lp in lows:
+                if i1 < li < i2 and (neck is None or lp < neck[1]):
+                    neck = (li, lp)
+            if neck is None:
+                continue
+            for c in range(i2 + 1, n):
+                if candles[c].close < neck[1]:
+                    _record("double_top", "bearish", c, p1 - neck[1])
+                    break
+
+    # Double Bottom (W)
+    for ai, (i1, p1) in enumerate(lows):
+        for i2, p2 in lows[ai + 1:]:
+            if i2 - i1 < 6:
+                continue
+            if abs(p2 - p1) > p1 * tol:
+                continue
+            neck = None
+            for hi, hp in highs:
+                if i1 < hi < i2 and (neck is None or hp > neck[1]):
+                    neck = (hi, hp)
+            if neck is None:
+                continue
+            for c in range(i2 + 1, n):
+                if candles[c].close > neck[1]:
+                    _record("double_bottom", "bullish", c, neck[1] - p1)
+                    break
+
+    # Strip the internal strength marker before returning.
+    for p in patterns:
+        p.pop("_strength", None)
+
+    return patterns[-6:]
 
 
 class TradingService:
     """Main trading strategy service combining TDI and pattern recognition."""
 
-    def __init__(self, symbol: str = "R_100"):
+    def __init__(self, symbol: str = "R_75"):
         self.symbol = symbol
         self.tdi = TDICalculator()
         self.pattern_recognizer = PatternRecognizer()

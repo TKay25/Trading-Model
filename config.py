@@ -16,8 +16,8 @@ class Config:
     DERIV_ENDPOINT = "https://api.derivws.com"
 
     # Trading defaults
-    DEFAULT_SYMBOL = os.getenv("DEFAULT_SYMBOL", "R_100")  # Volatility 100 Index
-    DEFAULT_TIMEFRAME = os.getenv("DEFAULT_TIMEFRAME", "1m")
+    DEFAULT_SYMBOL = os.getenv("DEFAULT_SYMBOL", "R_75")  # Volatility 75 Index
+    DEFAULT_TIMEFRAME = os.getenv("DEFAULT_TIMEFRAME", "5m")
 
     # Supported symbols (Volatility Indices)
     VOLATILITY_INDICES = {

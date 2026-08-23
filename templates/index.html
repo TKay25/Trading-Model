@@ -1,9 +1,69 @@
 {% extends "base.html" %}
 
-{% block title %}TradeVue — {{ default_symbol }}{% endblock %}
+{% block title %}BotTraderX5 — {{ default_symbol }}{% endblock %}
 
 {% block content %}
 <div class="dashboard-grid">
+    <!-- KPI Stats -->
+    <div class="stats-strip">
+        <div class="stat-card">
+            <div class="stat-icon stat-balance"><i class="bi bi-wallet2"></i></div>
+            <div class="stat-info">
+                <span class="stat-label">Balance</span>
+                <span class="stat-value" id="statBalance">$0.00</span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-winrate"><i class="bi bi-trophy"></i></div>
+            <div class="stat-info">
+                <span class="stat-label">Win Rate</span>
+                <span class="stat-value" id="statWinRate">--</span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-pl"><i class="bi bi-graph-up-arrow"></i></div>
+            <div class="stat-info">
+                <span class="stat-label">Session P/L</span>
+                <span class="stat-value" id="statPL">$0.00</span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-open"><i class="bi bi-briefcase"></i></div>
+            <div class="stat-info">
+                <span class="stat-label">Open Positions</span>
+                <span class="stat-value" id="statOpen">0</span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-var"><i class="bi bi-shield-exclamation"></i></div>
+            <div class="stat-info">
+                <span class="stat-label">VaR 95%</span>
+                <span class="stat-value risk" id="statVar95">--</span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-var"><i class="bi bi-shield-exclamation"></i></div>
+            <div class="stat-info">
+                <span class="stat-label">VaR 99%</span>
+                <span class="stat-value risk" id="statVar99">--</span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-es"><i class="bi bi-shield-x"></i></div>
+            <div class="stat-info">
+                <span class="stat-label">ES 95%</span>
+                <span class="stat-value risk-es" id="statEs95">--</span>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-es"><i class="bi bi-shield-x"></i></div>
+            <div class="stat-info">
+                <span class="stat-label">ES 99%</span>
+                <span class="stat-value risk-es" id="statEs99">--</span>
+            </div>
+        </div>
+    </div>
+
     <!-- Chart Section -->
     <div class="chart-section">
         <div class="chart-toolbar">
@@ -23,6 +83,11 @@
                 </div>
             </div>
             <div class="toolbar-group">
+                <div class="live-price" id="livePriceBox">
+                    <span class="live-price-label">Last</span>
+                    <span id="livePrice" class="live-price-value">--</span>
+                    <span id="liveChange" class="live-change"></span>
+                </div>
                 <button class="toolbar-btn" id="refreshChart" title="Refresh">
                     <i class="bi bi-arrow-clockwise"></i>
                 </button>
@@ -37,6 +102,16 @@
                     <span>Loading market data...</span>
                 </div>
                 <div id="tradingChart"></div>
+            </div>
+            <div class="rsi-pane">
+                <div class="rsi-pane-title">
+                    <span>TDI</span>
+                    <span class="rsi-legend"><i class="dot" style="background:#60a5fa"></i>RSI (13)</span>
+                    <span class="rsi-legend"><i class="dot" style="background:#34d399"></i>Signal (2)</span>
+                    <span class="rsi-legend"><i class="dot" style="background:#f87171"></i>Smoothed (7)</span>
+                    <span class="rsi-legend"><i class="dot" style="background:#fbbf24"></i>M. Base (34)</span>
+                </div>
+                <div id="rsiPane"></div>
             </div>
         </div>
     </div>
@@ -57,6 +132,7 @@
                 </div>
                 <div id="signalContent" class="d-none">
                     <div id="decisionBadge" class="decision-badge-wrap"></div>
+                    <div id="decisionSignalRow" class="decision-signal-row"></div>
                     <div id="decisionSummary" class="decision-confidence"></div>
                     <div id="decisionReason" class="decision-reason"></div>
                 </div>
@@ -110,18 +186,20 @@
             <div class="side-card-body">
                 <div class="trade-field">
                     <label>Lot Size</label>
-                    <input type="number" id="tradeLotSize" value="0.10" min="0.01" step="0.01">
+                    <input type="number" id="tradeLotSize" value="0.10" min="0.001" step="0.001">
                 </div>
                 <div class="trade-row">
                     <div class="trade-field flex-1">
-                        <label>Stop Loss</label>
-                        <input type="number" id="stopLoss" step="0.01" placeholder="--">
+                        <label>Stop Loss ($)</label>
+                        <input type="number" id="stopLoss" step="0.01" placeholder="0.00">
                     </div>
                     <div class="trade-field flex-1">
-                        <label>Take Profit</label>
-                        <input type="number" id="takeProfit" step="0.01" placeholder="--">
+                        <label>Take Profit ($)</label>
+                        <input type="number" id="takeProfit" step="0.01" placeholder="0.00">
                     </div>
                 </div>
+                <p class="sl-tp-hint">SL/TP auto-close the position when profit/loss targets are hit.</p>
+                <p class="sl-tp-hint" id="slTpTranslate">Set a $ SL/TP to see the equivalent market points.</p>
                 <div class="trade-actions">
                     <button class="btn-buy" id="btnBuy">
                         <i class="bi bi-arrow-up-short"></i> Buy
@@ -146,6 +224,49 @@
                 $<span id="balanceValue">0.00</span>
             </span>
         </div>
+    </div>
+</div>
+
+<!-- Trading History -->
+<div class="history-section">
+    <div class="history-header">
+        <span class="history-title"><i class="bi bi-clock-history"></i> Trading History</span>
+        <button id="refreshHistory" class="toolbar-btn" title="Refresh history">
+            <i class="bi bi-arrow-clockwise"></i>
+        </button>
+    </div>
+    <div class="history-table-wrap">
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Instrument</th>
+                    <th>Type</th>
+                    <th>Contract ID</th>
+                    <th>Lot Size</th>
+                    <th>SL ($)</th>
+                    <th>TP ($)</th>
+                    <th>Profit / Loss</th>
+                    <th>Result</th>
+                </tr>
+            </thead>
+            <tbody id="historyBody">
+                <tr class="history-empty"><td colspan="9">Connect to your account to view trading history.</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Open Positions -->
+<div class="history-section">
+    <div class="history-header">
+        <span class="history-title"><i class="bi bi-briefcase"></i> Open Positions</span>
+        <button id="refreshPositions" class="toolbar-btn" title="Refresh positions">
+            <i class="bi bi-arrow-clockwise"></i>
+        </button>
+    </div>
+    <div id="positionsBody" class="positions-list">
+        <div class="positions-empty">Connect to view open positions.</div>
     </div>
 </div>
 
