@@ -21,6 +21,12 @@ class TradingControls {
         this.btnConnect = document.getElementById('btnConnect');
         this.connectionStatus = document.getElementById('connectionStatus');
         this.accountBalance = document.getElementById('accountBalance');
+        this.balanceValue = document.getElementById('balanceValue');
+        // The sidebar connect bar (index.html) mirrors the nav status/balance but
+        // must use UNIQUE ids — the nav already owns connectionStatus/balanceValue.
+        this.sidebarStatus = document.getElementById('sidebarConnectionStatus');
+        this.sidebarBalance = document.getElementById('sidebarAccountBalance');
+        this.sidebarBalanceValue = document.getElementById('sidebarBalanceValue');
 
         this._multCache = {};    // symbol -> valid multiplier values
         this._multReqSeq = 0;    // guard against out-of-order refresh responses
@@ -184,9 +190,9 @@ class TradingControls {
                 this._startRefreshTimer();
                 if (window.app) { window.app._loadHistory(); window.app._loadPositions(); }
 
-                // Update account info
-                this.accountBalance.classList.remove('d-none');
-                document.getElementById('balanceValue').textContent = data.balance.toFixed(2);
+                // Update account info (nav + sidebar)
+                this._setBalanceValue(data.balance);
+                this._showBalance(true);
                 this._updateStatBalance(data.balance);
 
                 this._showToast('Connected',
@@ -252,18 +258,40 @@ class TradingControls {
     }
 
     _updateConnectionUI(connected) {
+        const setBadge = (el, online, label) => {
+            if (!el) return;
+            el.innerHTML = `<span class="status-dot"></span> ${label}`;
+            el.className = `status-badge ${online ? 'status-online' : 'status-offline'}`;
+        };
         if (connected) {
-            this.connectionStatus.innerHTML = '<span class="status-dot"></span> Connected';
-            this.connectionStatus.className = 'status-badge status-online';
+            setBadge(this.connectionStatus, true, 'Connected');     // nav
+            setBadge(this.sidebarStatus, true, 'Connected');        // sidebar
             this.btnConnect.innerHTML = '<i class="bi bi-plug-fill"></i> Disconnect';
             this.btnConnect.className = 'connect-btn disconnect';
         } else {
-            this.connectionStatus.innerHTML = '<span class="status-dot"></span> Offline';
-            this.connectionStatus.className = 'status-badge status-offline';
+            setBadge(this.connectionStatus, false, 'Offline');      // nav
+            setBadge(this.sidebarStatus, false, 'Offline');         // sidebar
             this.btnConnect.innerHTML = '<i class="bi bi-plug"></i> Connect';
             this.btnConnect.className = 'connect-btn';
-            this.accountBalance.classList.add('d-none');
+            this._showBalance(false);
         }
+    }
+
+    /**
+     * Set the balance shown in BOTH the nav and the sidebar connect bar.
+     */
+    _setBalanceValue(value) {
+        const text = (typeof value === 'number' ? value : parseFloat(value) || 0).toFixed(2);
+        if (this.balanceValue) this.balanceValue.textContent = text;
+        if (this.sidebarBalanceValue) this.sidebarBalanceValue.textContent = text;
+    }
+
+    /**
+     * Show/hide the balance container in BOTH the nav and the sidebar.
+     */
+    _showBalance(show) {
+        if (this.accountBalance) this.accountBalance.classList.toggle('d-none', !show);
+        if (this.sidebarBalance) this.sidebarBalance.classList.toggle('d-none', !show);
     }
 
     /**
@@ -277,8 +305,7 @@ class TradingControls {
             try {
                 const data = JSON.parse(ev.data);
                 if (data && data.balance && typeof data.balance.balance === 'number') {
-                    document.getElementById('balanceValue').textContent =
-                        data.balance.balance.toFixed(2);
+                    this._setBalanceValue(data.balance.balance);
                     this._updateStatBalance(data.balance.balance);
                 }
             } catch (err) {
