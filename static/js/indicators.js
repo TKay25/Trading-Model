@@ -167,84 +167,275 @@ class PatternRecognizer {
      */
     detect(candles) {
         if (!candles || candles.length < 3) return [];
-
         const patterns = [];
+        const push = (i, type, direction, strength) => {
+            patterns.push({ index: i, type, direction, strength, timestamp: candles[i].epoch });
+        };
 
-        for (let i = 2; i < candles.length; i++) {
-            const c1 = candles[i - 2];
-            const c2 = candles[i - 1];
-            const c3 = candles[i];
+        for (let i = 0; i < candles.length; i++) {
+            const c = candles[i];
+            const p = candles[i - 1];
+            const q = candles[i - 2];
 
-            const body = Math.abs(c3.close - c3.open);
-            const totalRange = c3.high - c3.low;
-            if (totalRange === 0) continue;
-            const bodyRatio = body / totalRange;
+            const body = Math.abs(c.close - c.open);
+            const range = c.high - c.low;
+            if (range === 0) continue;
+            const bodyRatio = body / range;
+            const upper = c.high - Math.max(c.open, c.close);
+            const lower = Math.min(c.open, c.close) - c.low;
+            const isBull = c.close > c.open;
+            const isBear = c.close < c.open;
 
-            // Bullish Engulfing — only when real body is significant
-            if (this._isBullishEngulfing(c1, c2, c3)) {
-                patterns.push({
-                    index: i,
-                    type: 'bullish_engulfing',
-                    direction: 'bullish',
-                    strength: 'strong',
-                    timestamp: c3.epoch,
-                });
-                continue; // skip other checks on same candle
-            }
+            // Previous-candle derived values (shared by 2- and 3-candle patterns).
+            const pb = p ? Math.abs(p.close - p.open) : 0;
+            const pBull = p ? p.close > p.open : false;
+            const pBear = p ? p.close < p.open : false;
+            const qb = q ? Math.abs(q.close - q.open) : 0;
+            const qBull = q ? q.close > q.open : false;
+            const qBear = q ? q.close < q.open : false;
 
-            // Bearish Engulfing
-            if (this._isBearishEngulfing(c1, c2, c3)) {
-                patterns.push({
-                    index: i,
-                    type: 'bearish_engulfing',
-                    direction: 'bearish',
-                    strength: 'strong',
-                    timestamp: c3.epoch,
-                });
+            // ---------- Single-candle formations ----------
+
+            // Marubozu: full body, negligible wicks
+            if (body > 0 && upper < body * 0.1 && lower < body * 0.1) {
+                push(i, isBull ? 'bullish_marubozu' : 'bearish_marubozu', isBull ? 'bullish' : 'bearish', 'strong');
                 continue;
             }
 
-            // Skip tiny-range candles — not enough price action
-            if (bodyRatio > 0.6) continue; // too much body, no significant wick
+            // Doji family: tiny body
+            if (body <= range * 0.1) {
+                if (lower >= range * 0.5) push(i, 'dragonfly_doji', 'bullish', 'medium');
+                else if (upper >= range * 0.5) push(i, 'gravestone_doji', 'bearish', 'medium');
+                else push(i, 'doji', 'neutral', 'weak');
+                continue;
+            }
 
-            const upperWick = c3.high - Math.max(c3.open, c3.close);
-            const lowerWick = Math.min(c3.open, c3.close) - c3.low;
-            const wickRatio = Math.max(upperWick, lowerWick) / totalRange;
+            // Spinning top: small body, wicks on both sides
+            if (bodyRatio <= 0.3 && upper > body * 1.5 && lower > body * 1.5) {
+                push(i, 'spinning_top', 'neutral', 'weak');
+                continue;
+            }
 
-            // Need a prominent wick (at least 55% of total range)
-            if (wickRatio < 0.55) continue;
+            // Hammer / Hanging Man: small body near top, long lower wick
+            if (bodyRatio <= 0.4 && lower >= body * 2 && lower > upper) {
+                const prior = (p ? (p.close > p.open ? 1 : -1) : 0) + (q ? (q.close > q.open ? 1 : -1) : 0);
+                const uptrend = prior >= 1;
+                push(i, uptrend ? 'hanging_man' : 'hammer', uptrend ? 'bearish' : 'bullish', 'medium');
+                continue;
+            }
 
-            // Need wick at least 3x the body
-            const dominantWick = Math.max(upperWick, lowerWick);
-            if (dominantWick < body * 3) continue;
+            // Shooting Star / Inverted Hammer: small body near bottom, long upper wick
+            if (bodyRatio <= 0.4 && upper >= body * 2 && upper > lower) {
+                const prior = (p ? (p.close > p.open ? 1 : -1) : 0) + (q ? (q.close > q.open ? 1 : -1) : 0);
+                const uptrend = prior >= 1;
+                push(i, uptrend ? 'shooting_star' : 'inverted_hammer', uptrend ? 'bearish' : 'bullish', 'medium');
+                continue;
+            }
 
-            // Also check recent direction context (last 3 candles)
-            const trendUp = i >= 3 && candles[i - 1].close > candles[i - 3].close;
-            const trendDown = i >= 3 && candles[i - 1].close < candles[i - 3].close;
+            // ---------- Two-candle formations ----------
+            if (p) {
+                // Bullish Engulfing
+                if (pBear && isBull && pb > 0 && body > pb && c.open <= p.close && c.close >= p.open) {
+                    push(i, 'bullish_engulfing', 'bullish', 'strong');
+                    continue;
+                }
+                // Bearish Engulfing
+                if (pBull && isBear && pb > 0 && body > pb && c.open >= p.close && c.close <= p.open) {
+                    push(i, 'bearish_engulfing', 'bearish', 'strong');
+                    continue;
+                }
+                // Bullish Harami: small bullish body inside prev bearish body
+                if (pBear && isBull && pb > 0 && body > 0 && body < pb && c.high <= p.high && c.low >= p.low) {
+                    push(i, 'bullish_harami', 'bullish', 'medium');
+                    continue;
+                }
+                // Bearish Harami
+                if (pBull && isBear && pb > 0 && body > 0 && body < pb && c.high <= p.high && c.low >= p.low) {
+                    push(i, 'bearish_harami', 'bearish', 'medium');
+                    continue;
+                }
+                // Piercing Line
+                if (pBear && isBull && pb > 0 && c.open <= p.low && c.close > p.close + pb / 2) {
+                    push(i, 'piercing_line', 'bullish', 'medium');
+                    continue;
+                }
+                // Dark Cloud Cover
+                if (pBull && isBear && pb > 0 && c.open >= p.high && c.close < p.close - pb / 2) {
+                    push(i, 'dark_cloud_cover', 'bearish', 'medium');
+                    continue;
+                }
+                // Tweezer Bottom / Top
+                if (pBear && isBull && Math.abs(c.low - p.low) <= range * 0.1) {
+                    push(i, 'tweezer_bottom', 'bullish', 'medium');
+                    continue;
+                }
+                if (pBull && isBear && Math.abs(c.high - p.high) <= range * 0.1) {
+                    push(i, 'tweezer_top', 'bearish', 'medium');
+                    continue;
+                }
+            }
 
-            if (lowerWick > upperWick && lowerWick > body * 3 && (trendDown || i < 3)) {
-                patterns.push({
-                    index: i,
-                    type: 'hammer',
-                    direction: 'bullish',
-                    strength: 'medium',
-                    timestamp: c3.epoch,
-                });
-            } else if (upperWick > lowerWick && upperWick > body * 3 && (trendUp || i < 3)) {
-                patterns.push({
-                    index: i,
-                    type: 'shooting_star',
-                    direction: 'bearish',
-                    strength: 'medium',
-                    timestamp: c3.epoch,
-                });
+            // ---------- Three-candle formations ----------
+            if (p && q) {
+                // Morning Star: big bear, small middle, big bull closing above
+                if (qBear && isBull && qb > 0 && body > pb && p.open < q.close && c.close > q.open) {
+                    push(i, 'morning_star', 'bullish', 'strong');
+                    continue;
+                }
+                // Evening Star
+                if (qBull && isBear && qb > 0 && body > pb && p.open > q.close && c.close < q.open) {
+                    push(i, 'evening_star', 'bearish', 'strong');
+                    continue;
+                }
+                // Three White Soldiers
+                if (qBull && pBull && isBull && q.close > q.open && p.close > p.open && c.close > c.open) {
+                    push(i, 'three_white_soldiers', 'bullish', 'strong');
+                    continue;
+                }
+                // Three Black Crows
+                if (qBear && pBear && isBear && q.close < q.open && p.close < p.open && c.close < c.open) {
+                    push(i, 'three_black_crows', 'bearish', 'strong');
+                    continue;
+                }
             }
         }
 
         // M (double-top) / W (double-bottom) reversal patterns
         patterns.push(...this._detectDoublePatterns(candles));
 
+        // Continuation patterns: Bullish/Bearish Flags and Pennants.
+        patterns.push(...this._detectContinuationPatterns(candles));
+
         return patterns;
+    }
+
+    /**
+     * Detect continuation patterns — Bullish/Bearish Flags and Pennants.
+     *
+     * A flag = a strong "pole" move (rocket up / waterfall down) followed by a
+     * TIGHT channel (rectangle) sloping against the trend, then a breakout beyond
+     * the channel line. A pennant is the same idea but the resting period is a
+     * small converging (symmetrical) triangle instead of a rectangle.
+     *
+     * Returned patterns carry `pole`, `flagTop` and `flagBottom` polylines so the
+     * chart can draw the pole + channel, and `index` = the breakout bar.
+     */
+    _detectContinuationPatterns(candles) {
+        const patterns = [];
+        const n = candles.length;
+        if (n < 30) return patterns;
+
+        const MIN_POLE = 4, MAX_POLE = 14;   // pole length (bars)
+        const MIN_FLAG = 4, MAX_FLAG = 14;   // flag/rest length (bars)
+        const POLE_PCT = 0.004;              // min pole range (0.4% of price)
+        const TIGHT_PCT = 0.007;             // max flag range (0.7% of price)
+        const TIGHT_FACTOR = 0.7;            // flag range < 70% of pole range
+
+        // Dedup: strongest flag/pennant per (type, breakout bar).
+        const best = new Map();
+        const add = (p, strength) => {
+            const key = `${p.type}:${p.index}`;
+            const existing = best.get(key);
+            if (!existing || strength > existing._strength) {
+                p._strength = strength;
+                best.set(key, p);
+            }
+        };
+
+        for (let i = MIN_FLAG + MIN_POLE; i < n; i++) {
+            for (let flagLen = MIN_FLAG; flagLen <= MAX_FLAG; flagLen++) {
+                const fStart = i - flagLen;   // first bar of the flag
+                const fEnd = i - 1;           // last bar of the flag
+                for (let poleLen = MIN_POLE; poleLen <= MAX_POLE; poleLen++) {
+                    const pStart = fStart - poleLen;
+                    if (pStart < 0) continue;
+                    const pEnd = fStart - 1;  // last bar of the pole
+
+                    const price0 = candles[pStart].open;
+                    if (price0 <= 0) continue;
+
+                    // --- Pole: strong directional move ---
+                    let poleHigh = -Infinity, poleLow = Infinity;
+                    for (let k = pStart; k <= pEnd; k++) {
+                        if (candles[k].high > poleHigh) poleHigh = candles[k].high;
+                        if (candles[k].low < poleLow) poleLow = candles[k].low;
+                    }
+                    const poleRange = poleHigh - poleLow;
+                    if (poleRange / price0 < POLE_PCT) continue;
+                    const poleUp = candles[pEnd].close > candles[pStart].open;
+                    const poleDn = candles[pEnd].close < candles[pStart].open;
+
+                    // --- Flag: tight consolidation after the pole ---
+                    const f0 = candles[fStart], f1 = candles[fEnd];
+                    let flagHigh = -Infinity, flagLow = Infinity;
+                    for (let k = fStart; k <= fEnd; k++) {
+                        if (candles[k].high > flagHigh) flagHigh = candles[k].high;
+                        if (candles[k].low < flagLow) flagLow = candles[k].low;
+                    }
+                    const flagRange = flagHigh - flagLow;
+                    if (flagRange / price0 > TIGHT_PCT) continue;       // must be tight
+                    if (flagRange > poleRange * TIGHT_FACTOR) continue; // tight vs pole
+
+                    // Channel line slopes (positive = line descends).
+                    const hiSlope = f0.high - f1.high; // upper line
+                    const loSlope = f0.low - f1.low;   // lower line
+                    const close = candles[i].close;    // breakout bar
+
+                    // BULLISH continuation: pole up, channel must not rise on top,
+                    // breakout above the flag's top line.
+                    if (poleUp && flagHigh < poleHigh && hiSlope >= 0 && close > flagHigh) {
+                        const isPennant = loSlope < 0; // lows rising => converging triangle
+                        add({
+                            index: i,
+                            type: isPennant ? 'bullish_pennant' : 'bullish_flag',
+                            direction: 'bullish',
+                            strength: 'medium',
+                            timestamp: candles[i].epoch,
+                            pole: [
+                                { time: candles[pStart].epoch, price: poleLow },
+                                { time: candles[pEnd].epoch, price: poleHigh },
+                            ],
+                            flagTop: [
+                                { time: f0.epoch, price: f0.high },
+                                { time: f1.epoch, price: f1.high },
+                            ],
+                            flagBottom: [
+                                { time: f0.epoch, price: f0.low },
+                                { time: f1.epoch, price: f1.low },
+                            ],
+                        }, poleRange);
+                        continue;
+                    }
+
+                    // BEARISH continuation: pole down, channel must not fall on bottom,
+                    // breakout below the flag's bottom line.
+                    if (poleDn && flagLow > poleLow && loSlope <= 0 && close < flagLow) {
+                        const isPennant = hiSlope > 0; // highs falling => converging triangle
+                        add({
+                            index: i,
+                            type: isPennant ? 'bearish_pennant' : 'bearish_flag',
+                            direction: 'bearish',
+                            strength: 'medium',
+                            timestamp: candles[i].epoch,
+                            pole: [
+                                { time: candles[pStart].epoch, price: poleHigh },
+                                { time: candles[pEnd].epoch, price: poleLow },
+                            ],
+                            flagTop: [
+                                { time: f0.epoch, price: f0.high },
+                                { time: f1.epoch, price: f1.high },
+                            ],
+                            flagBottom: [
+                                { time: f0.epoch, price: f0.low },
+                                { time: f1.epoch, price: f1.low },
+                            ],
+                        }, poleRange);
+                    }
+                }
+            }
+        }
+
+        return Array.from(best.values());
     }
 
     /**
@@ -276,7 +467,9 @@ class PatternRecognizer {
         // overlapping swing pairs don't stack identical M/W shapes on top of each other.
         const best = new Map();
         const add = (p, strength) => {
-            const key = `${p.type}:${p.index}`;
+            // Dedup key: H&S patterns anchor on the HEAD so multiple right-shoulder
+            // interpretations of the same head collapse into the single strongest.
+            const key = p._dedupKey || `${p.type}:${p.index}`;
             const existing = best.get(key);
             if (!existing || strength > existing._strength) {
                 p._strength = strength;
@@ -352,32 +545,112 @@ class PatternRecognizer {
             }
         }
 
+        // Head & Shoulders (bearish): left shoulder, a HIGHER head, and a right
+        // shoulder near-equal to the left. Neckline runs through the two valleys
+        // (N1 between LS-H, N2 between H-RS); a close below it confirms.
+        for (let a = 0; a < highs.length; a++) {
+            const LS = highs[a];
+            for (let b = a + 1; b < highs.length; b++) {
+                const H = highs[b];
+                if (H.index - LS.index < 3) continue;
+                if (H.price <= LS.price) continue; // head must be higher than left shoulder
+                for (let c = b + 1; c < highs.length; c++) {
+                    const RS = highs[c];
+                    if (RS.index - H.index < 3) continue;
+                    if (RS.index - LS.index < 10) continue; // meaningful span
+                    if (RS.price >= H.price) continue; // head must stay the highest
+                    if (Math.abs(RS.price - LS.price) > LS.price * tol * 1.5) continue; // shoulders ~equal
+                    if (H.price < Math.max(LS.price, RS.price) * (1 + 0.0015)) continue; // head protrudes above shoulders
+                    let N1 = null, N2 = null;
+                    for (const L of lows) {
+                        if (L.index > LS.index && L.index < H.index && (!N1 || L.price < N1.price)) N1 = L;
+                        if (L.index > H.index && L.index < RS.index && (!N2 || L.price < N2.price)) N2 = L;
+                    }
+                    if (!N1 || !N2) continue;
+                    const neckVal = (t) => {
+                        const span = (N2.time - N1.time) || 1;
+                        return N1.price + (N2.price - N1.price) * ((t - N1.time) / span);
+                    };
+                    for (let k = RS.index + 1; k < n; k++) {
+                        if (candles[k].close < neckVal(candles[k].epoch)) {
+                            add({
+                                index: k,
+                                type: 'head_and_shoulders',
+                                direction: 'bearish',
+                                strength: 'strong',
+                                timestamp: candles[k].epoch,
+                                _dedupKey: 'head_and_shoulders:' + H.time,
+                                points: [
+                                    { time: LS.time, price: LS.price },
+                                    { time: H.time, price: H.price },
+                                    { time: RS.time, price: RS.price },
+                                ],
+                                neckline: [
+                                    { time: N1.time, price: N1.price },
+                                    { time: N2.time, price: N2.price },
+                                ],
+                            }, (Math.max(LS.price, RS.price) - Math.min(N1.price, N2.price)));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Inverted Head & Shoulders (bullish): mirror image on the lows — left
+        // shoulder, a LOWER head, right shoulder near-equal to the left. Neckline
+        // through the two peaks; a close above it confirms.
+        for (let a = 0; a < lows.length; a++) {
+            const LS = lows[a];
+            for (let b = a + 1; b < lows.length; b++) {
+                const H = lows[b];
+                if (H.index - LS.index < 3) continue;
+                if (H.price >= LS.price) continue; // head must be lower than left shoulder
+                for (let c = b + 1; c < lows.length; c++) {
+                    const RS = lows[c];
+                    if (RS.index - H.index < 3) continue;
+                    if (RS.index - LS.index < 10) continue; // meaningful span
+                    if (RS.price <= H.price) continue; // head must stay the lowest
+                    if (Math.abs(RS.price - LS.price) > LS.price * tol * 1.5) continue; // shoulders ~equal
+                    if (H.price > Math.min(LS.price, RS.price) * (1 - 0.0015)) continue; // head protrudes below shoulders
+                    let N1 = null, N2 = null;
+                    for (const Hh of highs) {
+                        if (Hh.index > LS.index && Hh.index < H.index && (!N1 || Hh.price > N1.price)) N1 = Hh;
+                        if (Hh.index > H.index && Hh.index < RS.index && (!N2 || Hh.price > N2.price)) N2 = Hh;
+                    }
+                    if (!N1 || !N2) continue;
+                    const neckVal = (t) => {
+                        const span = (N2.time - N1.time) || 1;
+                        return N1.price + (N2.price - N1.price) * ((t - N1.time) / span);
+                    };
+                    for (let k = RS.index + 1; k < n; k++) {
+                        if (candles[k].close > neckVal(candles[k].epoch)) {
+                            add({
+                                index: k,
+                                type: 'inverted_head_shoulders',
+                                direction: 'bullish',
+                                strength: 'strong',
+                                timestamp: candles[k].epoch,
+                                _dedupKey: 'inverted_head_shoulders:' + H.time,
+                                points: [
+                                    { time: LS.time, price: LS.price },
+                                    { time: H.time, price: H.price },
+                                    { time: RS.time, price: RS.price },
+                                ],
+                                neckline: [
+                                    { time: N1.time, price: N1.price },
+                                    { time: N2.time, price: N2.price },
+                                ],
+                            }, (Math.max(N1.price, N2.price) - Math.min(LS.price, RS.price)));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         // Keep only the most recent handful to avoid clutter.
-        return Array.from(best.values()).slice(-6);
-    }
-
-    _isBullishEngulfing(c1, c2, c3) {
-        const body2 = Math.abs(c2.close - c2.open);
-        const body3 = Math.abs(c3.close - c3.open);
-        return (
-            body2 > 0 && body3 > 0 &&
-            c2.close < c2.open &&               // C2 is bearish
-            c3.close > c3.open &&               // C3 is bullish
-            c3.open < c2.close &&               // Opens below prev close
-            c3.close > c2.open                  // Closes above prev open
-        );
-    }
-
-    _isBearishEngulfing(c1, c2, c3) {
-        const body2 = Math.abs(c2.close - c2.open);
-        const body3 = Math.abs(c3.close - c3.open);
-        return (
-            body2 > 0 && body3 > 0 &&
-            c2.close > c2.open &&               // C2 is bullish
-            c3.close < c3.open &&               // C3 is bearish
-            c3.open > c2.close &&               // Opens above prev close
-            c3.close < c2.open                  // Closes below prev open
-        );
+        return Array.from(best.values()).slice(-8);
     }
 }
 
@@ -441,8 +714,9 @@ class SignalEngine {
     generate(tdi, patterns, candles, opts = {}) {
         const n = candles ? candles.length : 0;
         const tdiAction = this._tdiAction(tdi);
-        const patternAction = this._patternAction(patterns, n);
-        const overall = this._combine(tdiAction, patternAction);
+        const patternAction = this._patternAction(patterns, n, { mw: true });  // M/W (double top/bottom) only
+        const candleAction = this._patternAction(patterns, n, { mw: false }); // candlestick formations only
+        const overall = this._combine(tdiAction, patternAction, candleAction);
 
         // Suggested $ SL/TP, scaled to the lot size (stake) with a 1:2 risk/reward.
         const stake = (opts.stake && opts.stake > 0) ? opts.stake : 1;
@@ -456,12 +730,60 @@ class SignalEngine {
             action: overall.action,
             tdiAction: tdiAction,
             patternAction: patternAction,
+            candleAction: candleAction,
             confidence: overall.confidence,
             conflict: !!overall.conflict,
-            reason: this._reason(tdiAction, patternAction, patterns, n),
+            reason: this._reason(tdiAction, patternAction, candleAction, patterns, n),
             stop_loss: isDirectional ? Math.round(suggestedSl * 100) / 100 : null,
             take_profit: isDirectional ? Math.round(suggestedTp * 100) / 100 : null,
+            strength: this._strength(overall.action, tdi, candles),
         };
+    }
+
+    /**
+     * Signal strength 0..1 — how applicable the signal STILL is right now.
+     *
+     * Decays as recent candles move against the signal and drops to 0 once the
+     * TDI green/red alignment flips against it. HOLD always = 0.
+     */
+    _strength(action, tdi, candles) {
+        if (action !== 'BUY' && action !== 'SELL') return 0;
+        const n = candles ? candles.length : 0;
+        if (n < 5) return 0;
+
+        // Hard gate: if the TDI green/red lines flipped against the signal, it's dead.
+        let tdiOk = true;
+        if (tdi && Array.isArray(tdi.fullSignal) && Array.isArray(tdi.fullRsiSmoothed)) {
+            const g = tdi.fullSignal[n - 1];
+            const r = tdi.fullRsiSmoothed[n - 1];
+            if (g != null && r != null) tdiOk = action === 'BUY' ? g > r : g < r;
+        }
+        if (!tdiOk) return 0;
+
+        // Recent momentum: how many of the last 6 candles agree with the signal.
+        let agree = 0;
+        const W = 6;
+        for (let k = 1; k <= W; k++) {
+            const c = candles[n - k];
+            if (!c) continue;
+            const bull = parseFloat(c.close) > parseFloat(c.open);
+            if ((action === 'BUY' && bull) || (action === 'SELL' && !bull)) agree++;
+        }
+        const momentum = agree / W;
+
+        // Freshness: consecutive recent bars still supporting the signal.
+        let consecutive = 0;
+        for (let k = 1; k <= n; k++) {
+            const c = candles[n - k];
+            if (!c) break;
+            const bull = parseFloat(c.close) > parseFloat(c.open);
+            const agrees = (action === 'BUY' && bull) || (action === 'SELL' && !bull);
+            if (agrees) consecutive++; else break;
+        }
+        const freshness = Math.min(1, consecutive / 3);
+
+        const s = (0.4 + 0.6 * momentum) * (0.3 + 0.7 * freshness);
+        return Math.round(Math.max(0, Math.min(1, s)) * 100) / 100;
     }
 
     /**
@@ -529,12 +851,21 @@ class SignalEngine {
     }
 
     /**
-     * Pattern verdict: weighted bullish vs bearish formations in the recent window.
+     * Verdict from a pattern group: opts.mw=true counts M/W (double top/bottom)
+     * only; opts.mw=false counts candlestick formations only. Weighted bullish
+     * vs bearish in the recent window.
      */
-    _patternAction(patterns, candleCount) {
+    _patternAction(patterns, candleCount, opts = {}) {
+        const onlyMw = !!opts.mw;
         const recent = (patterns || []).filter(p => p.index >= candleCount - 10);
         let bull = 0, bear = 0;
         recent.forEach(p => {
+            const isMw = p.type === 'double_top' || p.type === 'double_bottom' ||
+                p.type === 'head_and_shoulders' || p.type === 'inverted_head_shoulders' ||
+                p.type === 'bullish_flag' || p.type === 'bearish_flag' ||
+                p.type === 'bullish_pennant' || p.type === 'bearish_pennant';
+            if (onlyMw && !isMw) return;
+            if (!onlyMw && isMw) return;
             const w = p.strength === 'strong' ? 2 : 1;
             if (p.direction === 'bullish') bull += w;
             else if (p.direction === 'bearish') bear += w;
@@ -546,41 +877,33 @@ class SignalEngine {
     }
 
     /**
-     * Overall decision from the two verdicts (STRICT rule).
+     * Overall decision (ALL-ALIGNED rule).
      *
-     * A neutral TDI always means HOLD — no directional call is made unless the
-     * TDI itself has a verdict. The pattern side only adds/removes conviction.
+     * BUY/SELL is ONLY issued when TDI, the M/W pattern, AND the candlestick
+     * verdict all point the same direction. Anything else = HOLD.
      */
-    _combine(tdi, pattern) {
-        if (tdi === 'NEUTRAL') return { action: 'NEUTRAL', confidence: 0.2, tdiNeutral: true };
-        if (pattern === 'NEUTRAL') {
-            // TDI has direction, patterns are silent -> follow TDI at reduced confidence.
-            return tdi === 'BUY'
-                ? { action: 'BUY', confidence: 0.6 }
-                : { action: 'SELL', confidence: 0.6 };
-        }
-        if ((tdi === 'BUY' && pattern === 'SELL') || (tdi === 'SELL' && pattern === 'BUY')) {
-            return { action: 'NEUTRAL', confidence: 0.25, conflict: true };
-        }
-        if (tdi === 'BUY' && pattern === 'BUY') return { action: 'BUY', confidence: 0.9 };
-        if (tdi === 'SELL' && pattern === 'SELL') return { action: 'SELL', confidence: 0.9 };
-        return { action: 'NEUTRAL', confidence: 0 };
+    _combine(tdi, pattern, candle) {
+        if (tdi === 'BUY' && pattern === 'BUY' && candle === 'BUY') return { action: 'BUY', confidence: 0.95 };
+        if (tdi === 'SELL' && pattern === 'SELL' && candle === 'SELL') return { action: 'SELL', confidence: 0.95 };
+        return { action: 'NEUTRAL', confidence: 0.2 };
     }
 
     /**
      * Human-readable reasoning.
      */
-    _reason(tdiAction, patternAction, patterns, candleCount) {
-        if (tdiAction === 'NEUTRAL') {
-            return 'TDI neutral — no directional call (HOLD). Wait for a TDI signal.';
+    _reason(tdiAction, patternAction, candleAction, patterns, candleCount) {
+        if (tdiAction === 'NEUTRAL' || patternAction === 'NEUTRAL' || candleAction === 'NEUTRAL') {
+            return 'Not all signals aligned (TDI / M-W / candlestick) — HOLD.';
         }
-        const tdiTxt = { BUY: 'TDI bullish', SELL: 'TDI bearish' }[tdiAction] || 'TDI neutral';
-        const patTxt = { BUY: 'patterns bullish', SELL: 'patterns bearish', NEUTRAL: 'patterns neutral' }[patternAction] || 'patterns neutral';
+        const tdiTxt = tdiAction === 'BUY' ? 'TDI bullish' : 'TDI bearish';
+        const patTxt = patternAction === 'BUY' ? 'M/W bullish' : 'M/W bearish';
+        const canTxt = candleAction === 'BUY' ? 'candles bullish' : 'candles bearish';
         const recent = (patterns || []).filter(p => p.index >= candleCount - 10);
-        const mw = recent.filter(p => p.type === 'double_top' || p.type === 'double_bottom');
-        const others = recent.length - mw.length;
-        const mwTxt = mw.length ? ` (${mw.map(p => p.type === 'double_bottom' ? 'W' : 'M').join('/')})` : '';
-        const otherTxt = others > 0 ? ` +${others} formation(s)` : '';
-        return `${tdiTxt} / ${patTxt}${mwTxt}${otherTxt}`;
+        const mw = recent.filter(p => ['double_top', 'double_bottom', 'head_and_shoulders', 'inverted_head_shoulders',
+            'bullish_flag', 'bearish_flag', 'bullish_pennant', 'bearish_pennant'].includes(p.type));
+        const labels = { double_top: 'M', double_bottom: 'W', head_and_shoulders: 'H&S', inverted_head_shoulders: 'iH&S',
+            bullish_flag: 'Flag', bearish_flag: 'Flag', bullish_pennant: 'Penn', bearish_pennant: 'Penn' };
+        const mwTxt = mw.length ? ` (${mw.map(p => labels[p.type]).join('/')})` : '';
+        return `${tdiTxt} / ${patTxt}${mwTxt} / ${canTxt} — all aligned`;
     }
 }

@@ -276,6 +276,8 @@ class TradingControls {
                     direction: direction,
                     stop_loss: parseFloat(this.stopLossInput.value) || 0,
                     take_profit: parseFloat(this.takeProfitInput.value) || 0,
+                    break_even: !!(document.getElementById('breakEvenToggle') || {}).checked,
+                    trail: !!(document.getElementById('trailToggle') || {}).checked,
                 }),
             });
 
@@ -298,6 +300,28 @@ class TradingControls {
             this.btnBuy.disabled = false;
             this.btnSell.disabled = false;
         }
+    }
+
+    /**
+     * Auto-trade an all-aligned signal from the signal engine.
+     * Paper mode only simulates; otherwise it places a real (demo/live) trade.
+     */
+    async autoTrade(action, strength, paper = true) {
+        const dir = action === 'BUY' ? 'BUY' : 'SELL';
+        const sym = window.app ? window.app.symbol : this.currentSymbol;
+        const tf = window.app ? window.app.timeframe : '';
+        if (paper) {
+            this._showTradeStatus(`PAPER ${dir} @ ${sym} ${tf} (strength ${strength}%)`, 'success');
+            this._showToast(`Paper ${dir}`, `${sym} ${tf} — all-aligned signal, strength ${strength}%. No real trade placed.`);
+            return;
+        }
+        if (!this.authenticated) {
+            this._showTradeStatus('Connect your account (or enable Paper mode) to auto-trade', 'warning');
+            return;
+        }
+        this.currentSymbol = sym;
+        if (window.app) window.app._lastDirection = dir;
+        await this._placeTrade(dir);
     }
 
     /**

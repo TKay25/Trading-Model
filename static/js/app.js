@@ -16,6 +16,17 @@ class TradingDashboardApp {
         this._lastDirection = 'BUY';
         this._payoutRatio = 1.82;
 
+        // Multi-timeframe / multi-market scanner state
+        this._scannerTimeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
+        this._scannerTimer = null;
+        this._scannerBusy = false;
+        this._scannerNotified = {};   // `${symbol}:${tf}:${action}` -> true (avoid repeat alerts)
+
+        // Analytics / trading helpers
+        this._historyRows = [];
+        this._autoTradeCooldown = 0;
+        this._audioCtx = null;
+
         // Modules
         this.chart = new TradingChart('tradingChart');
         this.tdi = new TDIIndicator();
@@ -33,14 +44,6 @@ class TradingDashboardApp {
         this.positionsBody = document.getElementById('positionsBody');
         this.refreshPositionsBtn = document.getElementById('refreshPositions');
 
-        // TDI display elements
-        this.tdiRsi = document.getElementById('tdiRsi');
-        this.tdiRsiSmoothed = document.getElementById('tdiRsiSmoothed');
-        this.tdiMarketBase = document.getElementById('tdiMarketBase');
-        this.tdiProgress = document.getElementById('tdiProgress');
-        this.tdiPatterns = document.getElementById('tdiPatterns');
-        this.tdiZone = document.getElementById('tdiZone');
-
         // Decision display elements
         this.signalBody = document.getElementById('signalBody');
         this.noSignal = document.getElementById('noSignal');
@@ -50,6 +53,28 @@ class TradingDashboardApp {
         this.decisionSummary = document.getElementById('decisionSummary');
         this.decisionReason = document.getElementById('decisionReason');
         this.signalCard = document.getElementById('signalCard');
+
+        // TF Scanner DOM refs
+        this.tfScannerList = document.getElementById('tfScannerList');
+        this.scannerStatus = document.getElementById('scannerStatus');
+        this.scannerUpdated = document.getElementById('scannerUpdated');
+        this.scannerSymbol = document.getElementById('scannerSymbol');
+        this.scannerMarkets = document.getElementById('scannerMarkets');
+        this.scannerMarketsCount = document.getElementById('scannerMarketsCount');
+
+        // Quick Trade helpers
+        this.riskPct = document.getElementById('riskPct');
+        this.riskHint = document.getElementById('riskHint');
+        this.autoTradeToggle = document.getElementById('autoTradeToggle');
+        this.autoTradeStrength = document.getElementById('autoTradeStrength');
+        this.autoStrengthVal = document.getElementById('autoStrengthVal');
+        this.autoTradePaper = document.getElementById('autoTradePaper');
+
+        // Performance / analytics
+        this.equityCanvas = document.getElementById('equityCanvas');
+        this.runBacktest = document.getElementById('runBacktest');
+        this.backtestBox = document.getElementById('backtestBox');
+        this.exportCsv = document.getElementById('exportCsv');
 
         this._bindEvents();
         this._loadInitialData();
@@ -100,6 +125,31 @@ class TradingDashboardApp {
         const tpIn = document.getElementById('takeProfit');
         if (slIn) slIn.addEventListener('input', () => this._updateSlTpTranslation());
         if (tpIn) tpIn.addEventListener('input', () => this._updateSlTpTranslation());
+
+        // Scanner symbol scope (market view vs single-symbol TF breakdown).
+        if (this.scannerSymbol) {
+            this.scannerSymbol.addEventListener('change', () => this._runScanner());
+        }
+        if (this.scannerMarkets) {
+            this.scannerMarkets.addEventListener('click', () => {
+                if (this.scannerSymbol) this.scannerSymbol.value = '__ALL__';
+                this._runScanner();
+            });
+        }
+
+        // Risk-based lot sizing.
+        if (this.riskPct) this.riskPct.addEventListener('input', () => this._suggestLot());
+
+        // Auto-trade min-strength label.
+        if (this.autoTradeStrength) {
+            this.autoTradeStrength.addEventListener('input', () => {
+                if (this.autoStrengthVal) this.autoStrengthVal.textContent = this.autoTradeStrength.value;
+            });
+        }
+
+        // Backtest + CSV export.
+        if (this.runBacktest) this.runBacktest.addEventListener('click', () => this._runBacktest());
+        if (this.exportCsv) this.exportCsv.addEventListener('click', () => this._exportCsv());
     }
 
     /**
@@ -111,6 +161,475 @@ class TradingDashboardApp {
         this._runAnalysis();
         // Open the live stream for real-time candle updates.
         this._connectLiveStream();
+        // Scan every timeframe for signals that appear off-screen.
+        this._startScanner();
+    }
+
+    // ------------------------------------------------------------------
+    // Multi-timeframe signal scanner
+    // ------------------------------------------------------------------
+
+    /**
+     * Start periodic scanning of ALL timeframes so the user is informed of a
+     * strong (all-aligned) signal even when it fires on a timeframe that is
+     * not the one currently open on screen.
+     */
+    _startScanner() {
+        if (this._scannerTimer) clearInterval(this._scannerTimer);
+        this._runScanner();
+        this._scannerTimer = setInterval(() => this._runScanner(), 40000);
+    }
+
+    _stopScanner() {
+        if (this._scannerTimer) {
+            clearInterval(this._scannerTimer);
+            this._scannerTimer = null;
+        }
+    }
+
+    _scannerSymbols() {
+        if (!this.scannerSymbol) return [this.symbol];
+        const opts = Array.from(this.scannerSymbol.options).map(o => o.value).filter(v => v !== '__ALL__');
+        return opts.length ? opts : [this.symbol];
+    }
+
+    async _runScanner() {
+        if (this._scannerBusy || !this.tfScannerList) return;
+        this._scannerBusy = true;
+        if (this.scannerStatus) this.scannerStatus.innerHTML = '<span class="status-dot pulse"></span> Scanning…';
+        try {
+            const resp = await fetch('/api/scanner', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    symbol: this.symbol,
+                    symbols: this._scannerSymbols(),
+                    timeframes: this._scannerTimeframes,
+                    count: 150,
+                }),
+            });
+            const data = await resp.json();
+            if (data.success && Array.isArray(data.results)) {
+                this._renderScanner(data.results);
+                if (this.scannerStatus) this.scannerStatus.innerHTML = '<span class="status-dot ok"></span> Live';
+                if (this.scannerUpdated) {
+                    this.scannerUpdated.textContent = 'updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                }
+            }
+        } catch (err) {
+            console.warn('Scanner fetch failed:', err);
+            if (this.scannerStatus) this.scannerStatus.innerHTML = '<span class="status-dot err"></span> Offline';
+        } finally {
+            this._scannerBusy = false;
+        }
+    }
+
+    _renderScanner(results) {
+        const activeSym = this.symbol;
+        const activeTf = this.timeframe;
+        const scope = this.scannerSymbol ? this.scannerSymbol.value : '__ALL__';
+
+        // Analyse every symbol+timeframe with the SAME signal engine as the chart.
+        const analyzed = [];
+        const currentActions = {};   // `${symbol}:${tf}` -> action (stale-alert cleanup)
+        results.forEach(r => {
+            if (!r.candles || !r.candles.length) return;
+            const candles = r.candles.map(c => ({ open: parseFloat(c.open), high: parseFloat(c.high), low: parseFloat(c.low), close: parseFloat(c.close), epoch: c.epoch }));
+            const tdi = this.tdi.calculate(candles);
+            if (!tdi) return;
+            const patterns = this.patternRecognizer.detect(candles);
+            const stake = parseFloat((document.getElementById('tradeLotSize') || {}).value) || 1;
+            const signal = this.signalEngine.generate(tdi, patterns, candles, { stake, payoutRatio: this._payoutRatio });
+            const key = `${r.symbol}:${r.timeframe}`;
+            currentActions[key] = signal.action || 'NEUTRAL';
+            analyzed.push({ symbol: r.symbol, timeframe: r.timeframe, candles, signal });
+        });
+
+        // Prune alert keys whose signal has since disappeared.
+        for (const key of Object.keys(this._scannerNotified)) {
+            const parts = key.split(':');
+            const sym = parts[0], tf = parts[1], act = parts[2];
+            if (currentActions[`${sym}:${tf}`] !== act) delete this._scannerNotified[key];
+        }
+
+        // Alert on any strong signal NOT on the active (symbol,timeframe).
+        let marketCount = 0;
+        analyzed.forEach(a => {
+            const act = a.signal.action;
+            if ((act === 'BUY' || act === 'SELL') && !(a.symbol === activeSym && a.timeframe === activeTf)) {
+                marketCount++;
+                this._checkScannerAlert(a.symbol, a.timeframe, a.signal);
+            }
+        });
+
+        // Markets badge in the scanner header.
+        if (this.scannerMarketsCount) this.scannerMarketsCount.textContent = marketCount;
+        if (this.scannerMarkets) this.scannerMarkets.classList.toggle('d-none', marketCount === 0);
+
+        // Render the list based on the scope dropdown.
+        let html = '';
+        if (scope === '__ALL__') {
+            const strong = analyzed.filter(a => a.signal.action === 'BUY' || a.signal.action === 'SELL');
+            if (!strong.length) {
+                html = '<div class="tf-scan-empty"><i class="bi bi-check-circle"></i>No strong signals across markets.</div>';
+            } else {
+                html = strong.map(a => {
+                    const act = a.signal.action;
+                    const isBuy = act === 'BUY';
+                    const isActive = a.symbol === activeSym && a.timeframe === activeTf;
+                    const pct = Math.round((a.signal.strength || 0) * 100);
+                    const cls = isBuy ? 'buy' : 'sell';
+                    return `<div class="tf-scan-row ${cls}${isActive ? ' active' : ''}" data-symbol="${a.symbol}" data-tf="${a.timeframe}">
+                        <span class="tf-scan-name">${a.symbol}</span>
+                        <span class="tf-scan-tf">${a.timeframe}</span>
+                        <span class="tf-scan-verdict ${cls}">${act}</span>
+                        <span class="tf-scan-strength ${cls}">${pct}%</span>
+                    </div>`;
+                }).join('');
+            }
+        } else {
+            const symData = analyzed.filter(a => a.symbol === scope);
+            if (!symData.length) {
+                html = '<div class="tf-scan-empty"><i class="bi bi-radar"></i>No data.</div>';
+            } else {
+                html = symData.map(a => {
+                    const act = a.signal.action || 'NEUTRAL';
+                    const isActive = scope === activeSym && a.timeframe === activeTf;
+                    const isBuy = act === 'BUY', isSell = act === 'SELL';
+                    const verdictCls = isBuy ? 'buy' : (isSell ? 'sell' : 'neutral');
+                    const label = isBuy ? 'BUY' : (isSell ? 'SELL' : 'HOLD');
+                    const pct = Math.round((a.signal.strength || 0) * 100);
+                    const sub = (n, v) => {
+                        const cls = v === 'BUY' ? 'buy' : (v === 'SELL' ? 'sell' : 'neutral');
+                        const arrow = v === 'BUY' ? '▲' : (v === 'SELL' ? '▼' : '·');
+                        return `<span class="tf-scan-sub ${cls}">${n}${arrow}</span>`;
+                    };
+                    const subs = sub('T', a.signal.tdiAction) + sub('W', a.signal.patternAction) + sub('C', a.signal.candleAction);
+                    const rowCls = (isBuy || isSell) ? ` ${verdictCls}` : '';
+                    return `<div class="tf-scan-row${rowCls}${isActive ? ' active' : ''}" data-symbol="${a.symbol}" data-tf="${a.timeframe}">
+                        <span class="tf-scan-name">${a.timeframe}${isActive ? '<i class="bi bi-broadcast tf-scan-active" title="on screen"></i>' : ''}</span>
+                        <span class="tf-scan-verdict ${verdictCls}">${label}</span>
+                        <span class="tf-scan-subs">${subs}</span>
+                        <span class="tf-scan-strength ${pct > 0 ? verdictCls : ''}">${isBuy || isSell ? pct + '%' : '—'}</span>
+                    </div>`;
+                }).join('');
+            }
+        }
+        this.tfScannerList.innerHTML = html;
+
+        const card = document.getElementById('scannerCard');
+        if (card) card.classList.toggle('has-signal', marketCount > 0);
+    }
+
+    /**
+     * Alert ONCE per new strong signal on a market that isn't on screen:
+     * toast + sound + desktop notification. Re-arms when the signal fades.
+     */
+    _checkScannerAlert(symbol, tf, signal) {
+        const action = signal.action;
+        const key = `${symbol}:${tf}:${action}`;
+        if (this._scannerNotified[key]) return;
+        this._scannerNotified[key] = true;
+
+        const pct = Math.round((signal.strength || 0) * 100);
+        this._notify(
+            `${symbol} ${tf} ${action} signal`,
+            `${symbol} · ${tf} — all aligned (TDI / M-W / Candles). ${signal.reason || ''} Strength ${pct}%.`
+        );
+        this._playAlertSound(action === 'BUY');
+        this._desktopNotify(`${symbol} ${tf} ${action} signal`, `${symbol} ${tf} — all aligned. Strength ${pct}%.`);
+
+        const row = this.tfScannerList.querySelector(`.tf-scan-row[data-symbol="${symbol}"][data-tf="${tf}"]`);
+        if (row) {
+            row.classList.remove('flash');
+            void row.offsetWidth;
+            row.classList.add('flash');
+        }
+    }
+
+    /**
+     * Short two-tone beep (Web Audio — no asset needed). Up tone for BUY,
+     * lower tone for SELL.
+     */
+    _playAlertSound(up = true) {
+        try {
+            const ctx = this._audioCtx || (this._audioCtx = new (window.AudioContext || window.webkitAudioContext)());
+            if (ctx.state === 'suspended') ctx.resume();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(up ? 880 : 520, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(up ? 1320 : 392, ctx.currentTime + 0.35);
+            gain.gain.setValueAtTime(0.001, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.5);
+        } catch (_) { /* ignore */ }
+    }
+
+    /**
+     * Desktop (browser) notification — fires even when the tab isn't focused.
+     */
+    _desktopNotify(title, body) {
+        try {
+            if (!('Notification' in window)) return;
+            if (Notification.permission === 'granted') {
+                new Notification(title, { body: body });
+            } else if (Notification.permission !== 'denied') {
+                Notification.requestPermission().then(p => {
+                    if (p === 'granted') new Notification(title, { body: body });
+                });
+            }
+        } catch (_) { /* ignore */ }
+    }
+
+    /**
+     * Auto-trade the all-aligned signal shown on the open chart, if enabled.
+     */
+    _maybeAutoTrade(signal) {
+        if (!this.autoTradeToggle || !this.autoTradeToggle.checked) return;
+        const now = Date.now();
+        if (now < this._autoTradeCooldown) return;
+        const action = signal.action;
+        if (action !== 'BUY' && action !== 'SELL') return;
+        const minStr = parseFloat(this.autoTradeStrength.value) || 0;
+        const strength = Math.round((signal.strength || 0) * 100);
+        if (strength < minStr) return;
+        // 90s cooldown so live SSE ticks don't spam the same signal.
+        this._autoTradeCooldown = now + 90000;
+        if (typeof tradingControls.autoTrade === 'function') {
+            tradingControls.autoTrade(action, strength, this.autoTradePaper && this.autoTradePaper.checked);
+        }
+    }
+
+    /**
+     * Suggest the lot size from a % risk of the current balance.
+     */
+    _suggestLot() {
+        if (!this.riskPct || !this.riskHint) return;
+        const pct = parseFloat(this.riskPct.value);
+        const balance = parseFloat((document.getElementById('balanceValue') || {}).textContent) || 0;
+        const lotEl = document.getElementById('tradeLotSize');
+        if (!pct || pct <= 0 || balance <= 0) {
+            this.riskHint.textContent = 'Set a Risk % to auto-suggest the lot size from your balance.';
+            return;
+        }
+        const riskAmt = balance * (pct / 100);
+        if (lotEl) lotEl.value = riskAmt.toFixed(3);
+        this.riskHint.textContent = `Risking $${riskAmt.toFixed(2)} (${pct}% of $${balance.toFixed(2)}) = lot ${riskAmt.toFixed(3)}.`;
+    }
+
+    // ------------------------------------------------------------------
+    // Performance analytics
+    // ------------------------------------------------------------------
+
+    _updatePerformance(rows) {
+        const settled = (rows || []).filter(r => r.status !== 'open' && typeof r.profit === 'number');
+        const set = (id, val, cls) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = val;
+            el.className = 'perf-value' + (cls ? ' ' + cls : '');
+        };
+        if (!settled.length) {
+            ['perfTrades','perfWinRate','perfProfitFactor','perfAvgWin','perfAvgLoss','perfBest','perfWorst','perfMaxDd','perfCall','perfPut']
+                .forEach(id => set(id, '--'));
+            this._renderEquityCurve([]);
+            return;
+        }
+        const n = settled.length;
+        const wins = settled.filter(r => r.profit > 0);
+        const losses = settled.filter(r => r.profit <= 0);
+        const grossWin = wins.reduce((s, r) => s + r.profit, 0);
+        const grossLoss = Math.abs(losses.reduce((s, r) => s + r.profit, 0));
+        const best = Math.max(...settled.map(r => r.profit));
+        const worst = Math.min(...settled.map(r => r.profit));
+        const ordered = [...settled].sort((a, b) => (a.time || 0) - (b.time || 0));
+
+        let cum = 0, peak = 0, maxDd = 0;
+        ordered.forEach(r => { cum += r.profit; if (cum > peak) peak = cum; const dd = peak - cum; if (dd > maxDd) maxDd = dd; });
+
+        const rate = (arr) => arr.length ? Math.round(arr.filter(r => r.profit > 0).length / arr.length * 100) + '%' : '--';
+        const call = settled.filter(r => /CALL/i.test(r.contract_type || ''));
+        const put = settled.filter(r => /PUT/i.test(r.contract_type || ''));
+
+        set('perfTrades', n);
+        set('perfWinRate', Math.round(wins.length / n * 100) + '%');
+        set('perfProfitFactor', grossLoss > 0 ? (grossWin / grossLoss).toFixed(2) : (grossWin > 0 ? '\u221e' : '--'));
+        set('perfAvgWin', wins.length ? '$' + (grossWin / wins.length).toFixed(2) : '--', 'pos');
+        set('perfAvgLoss', losses.length ? '$' + (grossLoss / losses.length).toFixed(2) : '--', 'neg');
+        set('perfBest', '$' + best.toFixed(2), 'pos');
+        set('perfWorst', '$' + worst.toFixed(2), 'neg');
+        set('perfMaxDd', '$' + maxDd.toFixed(2), 'neg');
+        set('perfCall', rate(call));
+        set('perfPut', rate(put));
+
+        this._renderEquityCurve(ordered);
+    }
+
+    _renderEquityCurve(ordered) {
+        const canvas = this.equityCanvas;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const W = canvas.width = canvas.clientWidth || 600;
+        const H = 150;
+        canvas.height = H;
+        ctx.clearRect(0, 0, W, H);
+        if (!ordered.length) {
+            ctx.fillStyle = 'rgba(142,163,192,0.6)';
+            ctx.font = '12px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('No settled trades yet', W / 2, H / 2);
+            return;
+        }
+        const pts = [];
+        let cum = 0;
+        ordered.forEach(r => { cum += r.profit; pts.push(cum); });
+        const min = Math.min(0, ...pts), max = Math.max(0, ...pts);
+        const range = (max - min) || 1;
+        const pad = 10;
+        const x = (i) => pad + (pts.length > 1 ? (i / (pts.length - 1)) * (W - 2 * pad) : W / 2);
+        const y = (v) => H - pad - ((v - min) / range) * (H - 2 * pad);
+
+        ctx.strokeStyle = 'rgba(142,163,192,0.35)';
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(pad, y(0)); ctx.lineTo(W - pad, y(0)); ctx.stroke();
+        ctx.setLineDash([]);
+
+        const grad = ctx.createLinearGradient(0, 0, 0, H);
+        grad.addColorStop(0, 'rgba(16,185,129,0.25)');
+        grad.addColorStop(1, 'rgba(239,68,68,0.15)');
+        ctx.beginPath();
+        ctx.moveTo(x(0), y(0));
+        pts.forEach((v, i) => ctx.lineTo(x(i), y(v)));
+        ctx.lineTo(x(pts.length - 1), y(0));
+        ctx.closePath();
+        ctx.fillStyle = grad;
+        ctx.fill();
+
+        ctx.beginPath();
+        pts.forEach((v, i) => (i === 0 ? ctx.moveTo(x(i), y(v)) : ctx.lineTo(x(i), y(v))));
+        ctx.strokeStyle = pts[pts.length - 1] >= 0 ? '#10b981' : '#ef4444';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(142,163,192,0.8)';
+        ctx.font = '10px Inter, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('Cumulative P/L', pad, 12);
+        ctx.textAlign = 'right';
+        ctx.fillText('$' + pts[pts.length - 1].toFixed(2), W - pad, H - 4);
+    }
+
+    /**
+     * Walk the signal engine forward over the last ~400 bars of the open
+     * symbol/timeframe and measure how often an all-aligned signal was right.
+     */
+    async _runBacktest() {
+        const btn = this.runBacktest;
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-cpu"></i> Running…'; }
+        try {
+            const resp = await fetch('/api/candles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbol: this.symbol, timeframe: this.timeframe, count: 1000 }),
+            });
+            const data = await resp.json();
+            if (!data.success || !data.candles || data.candles.length < 80) {
+                this._renderBacktest(null, 'Not enough data to backtest.');
+                return;
+            }
+            const candles = data.candles.map(c => ({ open: parseFloat(c.open), high: parseFloat(c.high), low: parseFloat(c.low), close: parseFloat(c.close), epoch: c.epoch }));
+            const res = this._walkForward(candles);
+            this._renderBacktest(res);
+        } catch (err) {
+            this._renderBacktest(null, 'Backtest failed: ' + err.message);
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-cpu"></i> Backtest'; }
+        }
+    }
+
+    _walkForward(candles) {
+        const n = candles.length;
+        const lookahead = 8;
+        const win = candles.slice(Math.max(50, n - 400)); // last ~400 bars
+        const m = win.length;
+        let signals = 0, wins = 0, buys = 0, sells = 0;
+        const moves = [];
+        for (let i = 50; i < m - lookahead; i += 2) { // stride 2 for speed
+            const sub = win.slice(0, i + 1);
+            const tdi = this.tdi.calculate(sub);
+            if (!tdi) continue;
+            const patterns = this.patternRecognizer.detect(sub);
+            const signal = this.signalEngine.generate(tdi, patterns, sub, { stake: 1, payoutRatio: this._payoutRatio });
+            const action = signal.action;
+            if (action !== 'BUY' && action !== 'SELL') continue;
+            const entry = parseFloat(sub[sub.length - 1].close);
+            const exit = parseFloat(win[i + lookahead].close);
+            const move = ((exit - entry) / entry) * 100;
+            const won = (action === 'BUY' && move > 0) || (action === 'SELL' && move < 0);
+            signals++;
+            if (won) wins++;
+            if (action === 'BUY') buys++; else sells++;
+            moves.push(Math.abs(move));
+        }
+        return {
+            signals, wins, buys, sells,
+            winRate: signals ? Math.round(wins / signals * 100) : 0,
+            avgMove: moves.length ? moves.reduce((s, v) => s + v, 0) / moves.length : 0,
+        };
+    }
+
+    _renderBacktest(res, err) {
+        const box = this.backtestBox;
+        if (!box) return;
+        if (err) {
+            box.className = 'backtest-box';
+            box.innerHTML = `<div class="backtest-err">${err}</div>`;
+            return;
+        }
+        box.className = 'backtest-box';
+        box.innerHTML = `
+            <div class="backtest-title"><i class="bi bi-cpu"></i> Backtest — ${this.symbol} ${this.timeframe}</div>
+            <div class="backtest-stats">
+                <span>Signals: <b>${res.signals}</b></span>
+                <span>BUY: <b>${res.buys}</b> · SELL: <b>${res.sells}</b></span>
+                <span>Win rate: <b class="${res.winRate >= 50 ? 'pos' : 'neg'}">${res.winRate}%</b></span>
+                <span>Avg |move|: <b>${res.avgMove.toFixed(2)}%</b> <small>(next ${8} bars)</small></span>
+            </div>`;
+    }
+
+    /**
+     * Export the current trading history as a CSV download.
+     */
+    _exportCsv() {
+        const rows = this._historyRows || [];
+        if (!rows.length) { this._notify('Export', 'No history to export yet.'); return; }
+        const head = ['Time', 'Instrument', 'Type', 'Contract ID', 'Lot Size', 'SL ($)', 'TP ($)', 'Profit/Loss', 'Result'];
+        const cell = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+        const lines = [head.join(',')];
+        rows.forEach(r => {
+            const time = r.time ? new Date(r.time * 1000).toLocaleString() : '';
+            const sl = (r.stop_loss || 0) > 0 ? (+r.stop_loss).toFixed(2) : '';
+            const tp = (r.take_profit || 0) > 0 ? (+r.take_profit).toFixed(2) : '';
+            const profit = r.status === 'open' ? '' : (r.profit ?? 0).toFixed(2);
+            const status = { won: 'Won', lost: 'Lost', open: 'Open' }[r.status] || r.status || '';
+            const lot = Number(r.lot_size ?? r.stake ?? 0).toFixed(3);
+            lines.push([time, r.symbol || '', r.contract_type || '', r.contract_id || '', lot, sl, tp, profit, status].map(cell).join(','));
+        });
+        const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `BotTraderX5_history_${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+        this._notify('Export', `Exported ${rows.length} trades to CSV`);
     }
 
     /**
@@ -193,6 +712,8 @@ class TradingDashboardApp {
     }
 
     _renderHistory(rows) {
+        this._historyRows = rows || [];
+        this._updatePerformance(this._historyRows);
         if (!rows || !rows.length) {
             this.historyBody.innerHTML =
                 '<tr class="history-empty"><td colspan="9"><i class="bi bi-journal-x"></i>No trades yet.</td></tr>';
@@ -480,6 +1001,7 @@ class TradingDashboardApp {
      */
     _refreshRiskMoney() {
         if (this.lastRisk) this._updateRiskDisplay(this.lastRisk);
+        if (this.riskPct && this.riskPct.value) this._suggestLot();
     }
 
     _updateLivePrice() {
@@ -535,16 +1057,12 @@ class TradingDashboardApp {
 
         const tdiValues = this.tdi.calculate(candles);
         if (tdiValues) {
-            this._updateTDIDisplay(tdiValues);
-            // Draw the TDI indicators on the chart (Market Base + RSI pane)
+            // Draw the TDI indicators in the RSI pane.
             this.chart.setTDI(tdiValues);
         }
 
         // Pattern detection
         const patterns = this.patternRecognizer.detect(candles);
-        const bullishCount = patterns.filter(p => p.direction === 'bullish').length;
-        const bearishCount = patterns.filter(p => p.direction === 'bearish').length;
-        this.tdiPatterns.textContent = bullishCount + bearishCount;
 
         // Risk metrics: Value at Risk / Expected Shortfall (95% / 99%)
         const risk = this.risk.calculate(candles);
@@ -559,14 +1077,18 @@ class TradingDashboardApp {
         });
         this._displaySignal(signal, { tdi: tdiValues, patterns });
 
-        // Highlight recent single-candle formations (M/W are drawn as shapes).
+        // Highlight recent single-candle formations (M/W/H&S/flags are drawn as shapes).
         const recentMarkers = patterns.filter(p =>
             p.index >= this.candles.length - 6 &&
-            p.type !== 'double_top' && p.type !== 'double_bottom');
+            !['double_top', 'double_bottom', 'head_and_shoulders', 'inverted_head_shoulders',
+              'bullish_flag', 'bearish_flag', 'bullish_pennant', 'bearish_pennant'].includes(p.type));
         recentMarkers.forEach(p => this.chart.highlightPattern(p.timestamp, p.type, p.direction));
 
         // Draw M (double-top) / W (double-bottom) shapes on the price chart.
         this.chart.drawMWPatterns(patterns);
+
+        // Auto-trade the all-aligned signal if enabled.
+        this._maybeAutoTrade(signal);
 
         // Refresh the $ SL/TP -> market points translation.
         this._updateSlTpTranslation();
@@ -603,38 +1125,6 @@ class TradingDashboardApp {
     }
 
     /**
-     * Update the TDI indicator display panel.
-     */
-    _updateTDIDisplay(tdi) {
-        this.tdiRsi.textContent = tdi.rsi ? tdi.rsi.toFixed(2) : '--';
-        this.tdiRsiSmoothed.textContent = tdi.rsiSmoothed ? tdi.rsiSmoothed.toFixed(2) : '--';
-        this.tdiMarketBase.textContent = tdi.marketBaseLine ? tdi.marketBaseLine.toFixed(2) : '--';
-
-        if (tdi.rsi !== null) {
-            this.tdiProgress.style.width = `${tdi.rsi}%`;
-            if (tdi.rsi > 70) {
-                this.tdiProgress.className = 'tdi-fill bearish';
-                this.tdiRsi.className = 'tdi-value';
-                this.tdiRsi.style.color = 'var(--red)';
-                this.tdiZone.textContent = 'Overbought';
-                this.tdiZone.style.color = 'var(--red)';
-            } else if (tdi.rsi < 30) {
-                this.tdiProgress.className = 'tdi-fill bullish';
-                this.tdiRsi.className = 'tdi-value';
-                this.tdiRsi.style.color = 'var(--green)';
-                this.tdiZone.textContent = 'Oversold';
-                this.tdiZone.style.color = 'var(--green)';
-            } else {
-                this.tdiProgress.className = 'tdi-fill neutral';
-                this.tdiRsi.className = 'tdi-value';
-                this.tdiRsi.style.color = '';
-                this.tdiZone.textContent = `${tdi.rsi.toFixed(0)}`;
-                this.tdiZone.style.color = '';
-            }
-        }
-    }
-
-    /**
      * Display trading signal.
      */
     _displaySignal(signal, analysis) {
@@ -668,7 +1158,10 @@ class TradingDashboardApp {
             return `<span class="signal-sub-label">${label}</span><span class="signal-sub-badge ${cls}">${v}</span>`;
         };
         if (this.decisionSignalRow) {
-            this.decisionSignalRow.innerHTML = sub('TDI', signal.tdiAction) + sub('Pattern', signal.patternAction);
+            this.decisionSignalRow.innerHTML =
+                sub('TDI', signal.tdiAction) +
+                sub('M/W', signal.patternAction) +
+                sub('Candles', signal.candleAction);
         }
 
         this.decisionSummary.innerHTML = `
@@ -687,6 +1180,16 @@ class TradingDashboardApp {
         `;
 
         this.decisionReason.innerHTML = signal.reason || '';
+
+        // Signal strength bar (how applicable the signal still is right now).
+        const strengthEl = document.getElementById('signalStrength');
+        if (strengthEl) {
+            const pct = Math.round((signal.strength || 0) * 100);
+            const cls = pct >= 50 ? 'strong' : (pct >= 25 ? 'mid' : 'weak');
+            strengthEl.innerHTML =
+                `<div class="strength-track"><div class="strength-fill ${cls}" style="width:${pct}%"></div></div>` +
+                `<span class="strength-label">Signal strength: ${pct}%</span>`;
+        }
 
         this.signalCard.className = `side-card ${cardClass}`.trim();
 

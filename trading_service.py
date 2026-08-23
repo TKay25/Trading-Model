@@ -209,6 +209,9 @@ class PatternRecognizer:
         # M (double-top) / W (double-bottom) reversal patterns
         patterns.extend(_detect_double_patterns(candles))
 
+        # Continuation patterns: Bullish/Bearish Flags and Pennants
+        patterns.extend(_detect_continuation_patterns(candles))
+
         return patterns
 
 
@@ -285,11 +288,172 @@ def _detect_double_patterns(candles: List[Candle]) -> List[Dict]:
                     _record("double_bottom", "bullish", c, neck[1] - p1)
                     break
 
+    # Head & Shoulders (bearish): left shoulder, higher head, right shoulder
+    # near-equal to the left; neckline through the two valleys; close below.
+    for ai, (i1, p1) in enumerate(highs):
+        for bi in range(ai + 1, len(highs)):
+            i2, p2 = highs[bi]
+            if i2 - i1 < 3:
+                continue
+            if p2 <= p1:  # head must be higher than left shoulder
+                continue
+            for ci in range(bi + 1, len(highs)):
+                i3, p3 = highs[ci]
+                if i3 - i2 < 3:
+                    continue
+                if i3 - i1 < 10:  # meaningful span
+                    continue
+                if p3 >= p2:  # head must stay the highest
+                    continue
+                if abs(p3 - p1) > p1 * tol * 1.5:  # shoulders ~equal
+                    continue
+                if p2 < max(p1, p3) * (1 + 0.0015):  # head protrudes above shoulders
+                    continue
+                n1 = None
+                for li, lp in lows:
+                    if i1 < li < i2 and (n1 is None or lp < n1[1]):
+                        n1 = (li, lp)
+                n2 = None
+                for li, lp in lows:
+                    if i2 < li < i3 and (n2 is None or lp < n2[1]):
+                        n2 = (li, lp)
+                if n1 is None or n2 is None:
+                    continue
+                t1 = candles[n1[0]].timestamp
+                t2 = candles[n2[0]].timestamp
+                span = (t2 - t1) or 1
+                for c in range(i3 + 1, n):
+                    t = candles[c].timestamp
+                    neck = n1[1] + (n2[1] - n1[1]) * ((t - t1) / span)
+                    if candles[c].close < neck:
+                        _record("head_and_shoulders", "bearish", c,
+                                max(p1, p3) - min(n1[1], n2[1]))
+                        break
+
+    # Inverted Head & Shoulders (bullish): mirror image on the lows.
+    for ai, (i1, p1) in enumerate(lows):
+        for bi in range(ai + 1, len(lows)):
+            i2, p2 = lows[bi]
+            if i2 - i1 < 3:
+                continue
+            if p2 >= p1:  # head must be lower than left shoulder
+                continue
+            for ci in range(bi + 1, len(lows)):
+                i3, p3 = lows[ci]
+                if i3 - i2 < 3:
+                    continue
+                if i3 - i1 < 10:  # meaningful span
+                    continue
+                if p3 <= p2:  # head must stay the lowest
+                    continue
+                if abs(p3 - p1) > p1 * tol * 1.5:  # shoulders ~equal
+                    continue
+                if p2 > min(p1, p3) * (1 - 0.0015):  # head protrudes below shoulders
+                    continue
+                n1 = None
+                for hi, hp in highs:
+                    if i1 < hi < i2 and (n1 is None or hp > n1[1]):
+                        n1 = (hi, hp)
+                n2 = None
+                for hi, hp in highs:
+                    if i2 < hi < i3 and (n2 is None or hp > n2[1]):
+                        n2 = (hi, hp)
+                if n1 is None or n2 is None:
+                    continue
+                t1 = candles[n1[0]].timestamp
+                t2 = candles[n2[0]].timestamp
+                span = (t2 - t1) or 1
+                for c in range(i3 + 1, n):
+                    t = candles[c].timestamp
+                    neck = n1[1] + (n2[1] - n1[1]) * ((t - t1) / span)
+                    if candles[c].close > neck:
+                        _record("inverted_head_shoulders", "bullish", c,
+                                max(n1[1], n2[1]) - min(p1, p3))
+                        break
+
     # Strip the internal strength marker before returning.
     for p in patterns:
         p.pop("_strength", None)
 
-    return patterns[-6:]
+    return patterns[-8:]
+
+
+def _detect_continuation_patterns(candles: List[Candle]) -> List[Dict]:
+    """Detect Bullish/Bearish Flags and Pennants (continuation patterns).
+
+    A flag = a strong "pole" move (rocket up / waterfall down) followed by a
+    TIGHT channel (rectangle) sloping against the trend, then a breakout beyond
+    the channel line. A pennant = the same pole but the resting period is a
+    small converging (symmetrical) triangle instead of a rectangle.
+    """
+    patterns = []
+    n = len(candles)
+    if n < 30:
+        return patterns
+
+    MIN_POLE, MAX_POLE = 4, 14
+    MIN_FLAG, MAX_FLAG = 4, 14
+    POLE_PCT = 0.004    # min pole range (0.4% of price)
+    TIGHT_PCT = 0.007   # max flag range (0.7% of price)
+    TIGHT_FACTOR = 0.7  # flag range < 70% of pole range
+
+    # Dedup: strongest flag/pennant per (type, breakout bar).
+    best = {}
+
+    def _add(type_, direction, i, strength):
+        key = (type_, i)
+        if key in best and strength <= best[key].get("_strength", 0):
+            return
+        best[key] = {
+            "index": i, "type": type_, "direction": direction,
+            "strength": "medium", "timestamp": candles[i].timestamp,
+            "_strength": strength,
+        }
+
+    for i in range(MIN_FLAG + MIN_POLE, n):
+        for flag_len in range(MIN_FLAG, MAX_FLAG + 1):
+            f_start = i - flag_len
+            f_end = i - 1
+            for pole_len in range(MIN_POLE, MAX_POLE + 1):
+                p_start = f_start - pole_len
+                if p_start < 0:
+                    continue
+                p_end = f_start - 1
+
+                price0 = candles[p_start].open
+                if price0 <= 0:
+                    continue
+
+                pole_high = max(c.high for c in candles[p_start:p_end + 1])
+                pole_low = min(c.low for c in candles[p_start:p_end + 1])
+                pole_range = pole_high - pole_low
+                if pole_range / price0 < POLE_PCT:
+                    continue
+                pole_up = candles[p_end].close > candles[p_start].open
+                pole_dn = candles[p_end].close < candles[p_start].open
+
+                f0, f1 = candles[f_start], candles[f_end]
+                flag_high = max(c.high for c in candles[f_start:f_end + 1])
+                flag_low = min(c.low for c in candles[f_start:f_end + 1])
+                flag_range = flag_high - flag_low
+                if flag_range / price0 > TIGHT_PCT:
+                    continue
+                if flag_range > pole_range * TIGHT_FACTOR:
+                    continue
+
+                hi_slope = f0.high - f1.high  # upper line (positive = descends)
+                lo_slope = f0.low - f1.low    # lower line
+                close = candles[i].close
+
+                if pole_up and flag_high < pole_high and hi_slope >= 0 and close > flag_high:
+                    _add("bullish_pennant" if lo_slope < 0 else "bullish_flag", "bullish", i, pole_range)
+                    continue
+                if pole_dn and flag_low > pole_low and lo_slope <= 0 and close < flag_low:
+                    _add("bearish_pennant" if hi_slope > 0 else "bearish_flag", "bearish", i, pole_range)
+
+    for p in best.values():
+        p.pop("_strength", None)
+    return list(best.values())
 
 
 class TradingService:

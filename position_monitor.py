@@ -19,7 +19,7 @@ class PositionMonitor:
     """Tracks SL/TP levels and auto-closes positions when they are hit."""
 
     def __init__(self):
-        self._limits = {}          # contract_id -> {symbol, stop_loss, take_profit}
+        self._limits = {}          # contract_id -> {symbol, stop_loss, take_profit, ...}
         self._lock = threading.Lock()
         self._thread = None
         self._running = False
@@ -39,12 +39,21 @@ class PositionMonitor:
             self._thread.join(timeout=3)
 
     # ---- tracking -------------------------------------------------------
-    def track(self, contract_id, symbol="", stop_loss=0, take_profit=0):
+    def track(self, contract_id, symbol="", stop_loss=0, take_profit=0,
+              break_even=False, trail=False, break_even_pct=0.5, trail_pct=0.5):
         with self._lock:
             self._limits[int(contract_id)] = {
                 "symbol": symbol or "",
                 "stop_loss": float(stop_loss or 0),
                 "take_profit": float(take_profit or 0),
+                # Dynamic profit level at/below which we sell. Starts at -stop_loss;
+                # break-even moves it to 0; trailing raises it to lock in profit.
+                "stop": -float(stop_loss or 0),
+                "break_even": bool(break_even),
+                "trail": bool(trail),
+                "break_even_pct": float(break_even_pct),
+                "trail_pct": float(trail_pct),
+                "max_profit": 0.0,
             }
 
     def untrack(self, contract_id):
@@ -121,16 +130,41 @@ class PositionMonitor:
                 continue
 
             profit = float(profit)
-            if lim["take_profit"] and profit >= lim["take_profit"]:
+            tp = lim.get("take_profit") or 0
+            stop = lim.get("stop", -lim.get("stop_loss", 0))
+
+            # --- Take profit ---
+            if tp and profit >= tp:
                 await api._send_request({"sell": int(cid), "price": 0})
                 self.untrack(cid)
                 logger.info("Take-profit hit for %s: profit=%.2f (target %.2f)",
-                            cid, profit, lim["take_profit"])
-            elif lim["stop_loss"] and profit <= -lim["stop_loss"]:
+                            cid, profit, tp)
+                continue
+
+            # --- Break-even: once profit reaches a fraction of TP, move SL to 0 ---
+            if lim.get("break_even") and tp and profit >= tp * lim.get("break_even_pct", 0.5) and stop < 0:
+                stop = 0.0
+                lim["stop"] = 0.0
+                logger.info("Break-even reached for %s: profit=%.2f (SL moved to 0)", cid, profit)
+
+            # --- Trailing: keep the stop a fraction of TP below the best profit ---
+            if lim.get("trail"):
+                if profit > lim["max_profit"]:
+                    lim["max_profit"] = profit
+                if tp:
+                    candidate = max(0.0, lim["max_profit"] - tp * lim.get("trail_pct", 0.5))
+                    if candidate > stop:
+                        stop = candidate
+                        lim["stop"] = candidate
+
+            # --- Stop loss (original or dynamic) ---
+            # Active if the user set an SL, OR a dynamic stop has been raised above 0
+            # (which only happens once break-even/trailing have locked in some profit).
+            if (lim.get("stop_loss") or stop > 0) and profit <= stop:
                 await api._send_request({"sell": int(cid), "price": 0})
                 self.untrack(cid)
                 logger.info("Stop-loss hit for %s: profit=%.2f (stop %.2f)",
-                            cid, profit, lim["stop_loss"])
+                            cid, profit, stop)
 
     async def _close(self, api):
         try:

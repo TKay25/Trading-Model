@@ -134,45 +134,38 @@
                     <div id="decisionBadge" class="decision-badge-wrap"></div>
                     <div id="decisionSignalRow" class="decision-signal-row"></div>
                     <div id="decisionSummary" class="decision-confidence"></div>
+                    <div id="signalStrength" class="signal-strength"></div>
                     <div id="decisionReason" class="decision-reason"></div>
                 </div>
             </div>
         </div>
 
-        <!-- TDI -->
-        <div class="side-card">
+        <!-- Timeframe / Market Scanner -->
+        <div class="side-card" id="scannerCard">
             <div class="side-card-header">
-                <i class="bi bi-activity"></i>
-                <span>TDI</span>
+                <i class="bi bi-radioactive"></i>
+                <span>TF Scanner</span>
+                <button id="scannerMarkets" class="scanner-markets d-none" title="Strong signals on other markets — click to view all">
+                    <i class="bi bi-bell-fill"></i> <span id="scannerMarketsCount">0</span>
+                </button>
             </div>
             <div class="side-card-body">
-                <div class="tdi-grid">
-                    <div class="tdi-item">
-                        <span class="tdi-label">RSI</span>
-                        <span id="tdiRsi" class="tdi-value">--</span>
-                    </div>
-                    <div class="tdi-item">
-                        <span class="tdi-label">Smoothed</span>
-                        <span id="tdiRsiSmoothed" class="tdi-value">--</span>
-                    </div>
-                    <div class="tdi-item">
-                        <span class="tdi-label">M. Base</span>
-                        <span id="tdiMarketBase" class="tdi-value">--</span>
-                    </div>
-                    <div class="tdi-item">
-                        <span class="tdi-label">Patterns</span>
-                        <span id="tdiPatterns" class="tdi-value">0</span>
-                    </div>
+                <div class="scanner-meta">
+                    <select id="scannerSymbol" class="scanner-symbol" title="Symbol to show the timeframe breakdown for">
+                        <option value="__ALL__">All markets</option>
+                        {% for symbol, name in symbols.items() %}
+                        <option value="{{ symbol }}" {% if symbol == default_symbol %}selected{% endif %}>{{ symbol }}</option>
+                        {% endfor %}
+                    </select>
+                    <span id="scannerStatus" class="scanner-status">
+                        <span class="status-dot"></span> Scanning…
+                    </span>
                 </div>
-                <div class="tdi-meter">
-                    <div class="tdi-track">
-                        <div id="tdiProgress" class="tdi-fill" style="width: 50%"></div>
-                    </div>
-                    <div class="tdi-labels">
-                        <span>0</span>
-                        <span id="tdiZone" class="tdi-zone">50</span>
-                        <span>100</span>
-                    </div>
+                <div class="scanner-updated-row">
+                    <span id="scannerUpdated" class="scanner-updated"></span>
+                </div>
+                <div id="tfScannerList" class="tf-scan-list">
+                    <div class="tf-scan-empty"><i class="bi bi-radar"></i>Analyzing all timeframes…</div>
                 </div>
             </div>
         </div>
@@ -184,10 +177,17 @@
                 <span>Quick Trade</span>
             </div>
             <div class="side-card-body">
-                <div class="trade-field">
-                    <label>Lot Size</label>
-                    <input type="number" id="tradeLotSize" value="0.10" min="0.001" step="0.001">
+                <div class="trade-row">
+                    <div class="trade-field flex-1">
+                        <label>Lot Size</label>
+                        <input type="number" id="tradeLotSize" value="0.10" min="0.001" step="0.001">
+                    </div>
+                    <div class="trade-field flex-1">
+                        <label>Risk %</label>
+                        <input type="number" id="riskPct" value="" step="0.1" min="0.1" placeholder="e.g. 1">
+                    </div>
                 </div>
+                <p class="sl-tp-hint" id="riskHint">Set a Risk % to auto-suggest the lot size from your balance.</p>
                 <div class="trade-row">
                     <div class="trade-field flex-1">
                         <label>Stop Loss ($)</label>
@@ -200,6 +200,10 @@
                 </div>
                 <p class="sl-tp-hint">SL/TP auto-close the position when profit/loss targets are hit.</p>
                 <p class="sl-tp-hint" id="slTpTranslate">Set a $ SL/TP to see the equivalent market points.</p>
+                <div class="trade-row">
+                    <label class="switch-label"><input type="checkbox" id="breakEvenToggle"> <span>Break-even</span></label>
+                    <label class="switch-label"><input type="checkbox" id="trailToggle"> <span>Trail SL</span></label>
+                </div>
                 <div class="trade-actions">
                     <button class="btn-buy" id="btnBuy">
                         <i class="bi bi-arrow-up-short"></i> Buy
@@ -207,6 +211,19 @@
                     <button class="btn-sell" id="btnSell">
                         <i class="bi bi-arrow-down-short"></i> Sell
                     </button>
+                </div>
+                <div class="auto-trade-box">
+                    <label class="switch-label auto-toggle">
+                        <input type="checkbox" id="autoTradeToggle">
+                        <span class="switch"></span>
+                        <span class="auto-label"><i class="bi bi-robot"></i> Auto-trade</span>
+                    </label>
+                    <div class="auto-trade-controls">
+                        <label class="auto-min">Min strength <span id="autoStrengthVal">60</span>%</label>
+                        <input type="range" id="autoTradeStrength" min="10" max="100" value="60" step="5">
+                        <label class="switch-label"><input type="checkbox" id="autoTradePaper" checked> <span>Paper mode</span></label>
+                    </div>
+                    <p class="sl-tp-hint">Auto-trades the all-aligned signal on the open chart. Paper mode = simulated, no real trade.</p>
                 </div>
                 <div id="tradeStatus" class="trade-status d-none"></div>
             </div>
@@ -231,9 +248,14 @@
 <div class="history-section">
     <div class="history-header">
         <span class="history-title"><i class="bi bi-clock-history"></i> Trading History</span>
-        <button id="refreshHistory" class="toolbar-btn" title="Refresh history">
-            <i class="bi bi-arrow-clockwise"></i>
-        </button>
+        <div class="history-actions">
+            <button id="exportCsv" class="toolbar-btn" title="Export history to CSV">
+                <i class="bi bi-download"></i> CSV
+            </button>
+            <button id="refreshHistory" class="toolbar-btn" title="Refresh history">
+                <i class="bi bi-arrow-clockwise"></i>
+            </button>
+        </div>
     </div>
     <div class="history-table-wrap">
         <table class="history-table">
@@ -268,6 +290,30 @@
     <div id="positionsBody" class="positions-list">
         <div class="positions-empty">Connect to view open positions.</div>
     </div>
+</div>
+
+<!-- Performance Analytics -->
+<div class="history-section">
+    <div class="history-header">
+        <span class="history-title"><i class="bi bi-graph-up"></i> Performance</span>
+        <button id="runBacktest" class="toolbar-btn" title="Run signal backtest on the open symbol/timeframe">
+            <i class="bi bi-cpu"></i> Backtest
+        </button>
+    </div>
+    <div class="perf-grid">
+        <div class="perf-tile"><span class="perf-label">Trades</span><span class="perf-value" id="perfTrades">--</span></div>
+        <div class="perf-tile"><span class="perf-label">Win Rate</span><span class="perf-value" id="perfWinRate">--</span></div>
+        <div class="perf-tile"><span class="perf-label">Profit Factor</span><span class="perf-value" id="perfProfitFactor">--</span></div>
+        <div class="perf-tile"><span class="perf-label">Avg Win</span><span class="perf-value pos" id="perfAvgWin">--</span></div>
+        <div class="perf-tile"><span class="perf-label">Avg Loss</span><span class="perf-value neg" id="perfAvgLoss">--</span></div>
+        <div class="perf-tile"><span class="perf-label">Best</span><span class="perf-value pos" id="perfBest">--</span></div>
+        <div class="perf-tile"><span class="perf-label">Worst</span><span class="perf-value neg" id="perfWorst">--</span></div>
+        <div class="perf-tile"><span class="perf-label">Max Drawdown</span><span class="perf-value neg" id="perfMaxDd">--</span></div>
+        <div class="perf-tile"><span class="perf-label">CALL Win</span><span class="perf-value" id="perfCall">--</span></div>
+        <div class="perf-tile"><span class="perf-label">PUT Win</span><span class="perf-value" id="perfPut">--</span></div>
+    </div>
+    <canvas id="equityCanvas" class="equity-canvas" height="150"></canvas>
+    <div id="backtestBox" class="backtest-box d-none"></div>
 </div>
 
 <!-- Token Input Modal -->

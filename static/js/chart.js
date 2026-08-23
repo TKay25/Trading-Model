@@ -433,15 +433,20 @@ class TradingChart {
         this.patternLines.forEach(line => this.chart.removeSeries(line));
         this.patternLines = [];
 
+        const chartPatternTypes = ['double_top', 'double_bottom', 'head_and_shoulders', 'inverted_head_shoulders',
+            'bullish_flag', 'bearish_flag', 'bullish_pennant', 'bearish_pennant'];
         let mw = (patterns || []).filter(p =>
-            (p.type === 'double_top' || p.type === 'double_bottom') &&
-            Array.isArray(p.points) && p.points.length >= 3
+            chartPatternTypes.includes(p.type) && (
+                (Array.isArray(p.points) && p.points.length >= 2) ||
+                (Array.isArray(p.flagTop) && p.flagTop.length >= 2)
+            )
         );
         if (!mw.length) return;
 
         // Draw patterns chronologically across the WHOLE chart so they stay
         // visible no matter where the user zooms (not just the most recent few).
-        mw.sort((a, b) => a.points[0].time - b.points[0].time);
+        const firstTime = (p) => (p.points && p.points[0]) ? p.points[0].time : p.flagTop[0].time;
+        mw.sort((a, b) => firstTime(a) - firstTime(b));
         const maxPatterns = 8;
         if (mw.length > maxPatterns) {
             const step = (mw.length - 1) / (maxPatterns - 1);
@@ -450,36 +455,73 @@ class TradingChart {
                 .map(([, p]) => p);
         }
 
-        // Drop any old M/W markers so we don't stack duplicates.
+        // Drop any old M/W/H&S/flag markers so we don't stack duplicates.
         const existing = this.candleSeries.markers() || [];
-        const kept = existing.filter(m => !(m.text === 'M' || m.text === 'W'));
+        const kept = existing.filter(m => !['M', 'W', 'HS', 'iHS', 'FLG', 'PNN'].includes(m.text));
         this.candleSeries.setMarkers(kept);
 
+        const labelMap = {
+            double_top: 'M', double_bottom: 'W',
+            head_and_shoulders: 'HS', inverted_head_shoulders: 'iHS',
+            bullish_flag: 'FLG', bearish_flag: 'FLG',
+            bullish_pennant: 'PNN', bearish_pennant: 'PNN',
+        };
+        const bullishTypes = ['double_bottom', 'inverted_head_shoulders', 'bullish_flag', 'bullish_pennant'];
         mw.forEach(p => {
-            const isW = p.type === 'double_bottom';
+            const isBullish = bullishTypes.includes(p.type);
             // Faint, background-style colour so candles stay readable.
-            const color = isW ? 'rgba(34, 171, 148, 0.30)' : 'rgba(242, 54, 69, 0.30)';
-            const line = this.chart.addLineSeries({
+            const color = isBullish ? 'rgba(34, 171, 148, 0.30)' : 'rgba(242, 54, 69, 0.30)';
+            const style = {
                 color: color,
                 lineWidth: 1,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
                 crosshairMarkerVisible: false,
                 lastValueVisible: false,
                 priceLineVisible: false,
-            });
-            line.setData(p.points.map(pt => ({ time: pt.time, value: pt.price })));
-            this.patternLines.push(line);
+            };
 
-            // Subtle M/W label at the first vertex only (no bold arrows).
-            const first = p.points[0];
+            // Main silhouette (M/W hump, H&S shoulder-head-shoulder, or pole).
+            if (Array.isArray(p.points) && p.points.length >= 2) {
+                const line = this.chart.addLineSeries(style);
+                line.setData(p.points.map(pt => ({ time: pt.time, value: pt.price })));
+                this.patternLines.push(line);
+            }
+
+            // H&S neckline (through the two valleys / peaks).
+            if (Array.isArray(p.neckline) && p.neckline.length >= 2) {
+                const neck = this.chart.addLineSeries({ ...style, color: isBullish ? 'rgba(34, 171, 148, 0.18)' : 'rgba(242, 54, 69, 0.18)' });
+                neck.setData(p.neckline.map(pt => ({ time: pt.time, value: pt.price })));
+                this.patternLines.push(neck);
+            }
+
+            // Flag / Pennant: pole + upper & lower channel lines.
+            if (Array.isArray(p.flagTop) && p.flagTop.length >= 2) {
+                const top = this.chart.addLineSeries({ ...style, color: isBullish ? 'rgba(34, 171, 148, 0.45)' : 'rgba(242, 54, 69, 0.45)' });
+                top.setData(p.flagTop.map(pt => ({ time: pt.time, value: pt.price })));
+                this.patternLines.push(top);
+            }
+            if (Array.isArray(p.flagBottom) && p.flagBottom.length >= 2) {
+                const bottom = this.chart.addLineSeries({ ...style, color: isBullish ? 'rgba(34, 171, 148, 0.45)' : 'rgba(242, 54, 69, 0.45)' });
+                bottom.setData(p.flagBottom.map(pt => ({ time: pt.time, value: pt.price })));
+                this.patternLines.push(bottom);
+            }
+            if (Array.isArray(p.pole) && p.pole.length >= 2) {
+                const pole = this.chart.addLineSeries({ ...style, color: isBullish ? 'rgba(34, 171, 148, 0.55)' : 'rgba(242, 54, 69, 0.55)' });
+                pole.setData(p.pole.map(pt => ({ time: pt.time, value: pt.price })));
+                this.patternLines.push(pole);
+            }
+
+            // Subtle label at the first vertex only (no bold arrows).
+            const first = (Array.isArray(p.points) && p.points.length) ? p.points[0] : (p.flagTop ? p.flagTop[0] : null);
+            if (!first) return;
             this.candleSeries.setMarkers([
                 ...(this.candleSeries.markers() || []),
                 {
                     time: first.time,
-                    position: isW ? 'belowBar' : 'aboveBar',
-                    color: isW ? 'rgba(34, 171, 148, 0.55)' : 'rgba(242, 54, 69, 0.55)',
+                    position: isBullish ? 'belowBar' : 'aboveBar',
+                    color: isBullish ? 'rgba(34, 171, 148, 0.55)' : 'rgba(242, 54, 69, 0.55)',
                     shape: 'circle',
-                    text: isW ? 'W' : 'M',
+                    text: labelMap[p.type] || 'M',
                 },
             ]);
         });

@@ -304,6 +304,54 @@ def get_candles():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/api/scanner", methods=["POST"])
+def scanner():
+    """Fetch candle history for MULTIPLE symbols AND timeframes over ONE connection.
+
+    The frontend runs the same TDI / M-W / candlestick signal engine on each
+    symbol+timeframe locally and alerts the user when a strong (all-aligned)
+    BUY/SELL appears on a market that isn't currently on screen.
+    """
+    data = request.get_json() or {}
+    symbol = data.get("symbol", Config.DEFAULT_SYMBOL)
+    tf_list = data.get("timeframes") or list(Config.TIMEFRAMES.keys())
+    try:
+        count = int(data.get("count", 150))
+    except (TypeError, ValueError):
+        count = 150
+
+    valid = [tf for tf in tf_list if tf in Config.TIMEFRAMES]
+    if not valid:
+        return jsonify({"success": False, "error": "no valid timeframes"}), 400
+
+    known = list(Config.VOLATILITY_INDICES.keys())
+    syms = [s for s in (data.get("symbols") or [symbol]) if s in known] or [Config.DEFAULT_SYMBOL]
+
+    async def _scan(api):
+        # Fire all symbol x timeframe fetches concurrently over the ONE connection
+        # (each request has its own integer req_id, routed by the listener) so a
+        # 70-market scan completes in ~1-2s instead of 30s+.
+        keys = [(s, tf) for s in syms for tf in valid]
+        coros = [api.get_candles(s, Config.TIMEFRAMES[tf], count) for (s, tf) in keys]
+        outs = await asyncio.gather(*coros, return_exceptions=True)
+        results = []
+        for (s, tf), res in zip(keys, outs):
+            if isinstance(res, Exception):
+                results.append({"symbol": s, "timeframe": tf, "candles": [], "error": str(res)})
+            elif isinstance(res, dict) and "candles" in res:
+                results.append({"symbol": s, "timeframe": tf, "candles": res["candles"], "error": None})
+            else:
+                results.append({"symbol": s, "timeframe": tf, "candles": [], "error": str(res)})
+        return results
+
+    try:
+        results = _deriv_call(_scan)
+        return jsonify({"success": True, "symbol": symbol, "symbols": syms, "results": results})
+    except Exception as e:
+        logger.error(f"Error in scanner: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
     """Run TDI analysis and pattern recognition on candle data."""
@@ -394,6 +442,8 @@ def place_trade():
     direction = data.get("direction", "BUY")  # BUY (CALL) or SELL (PUT)
     stop_loss = data.get("stop_loss", 0) or 0
     take_profit = data.get("take_profit", 0) or 0
+    break_even = bool(data.get("break_even", False))
+    trail = bool(data.get("trail", False))
 
     if not Config.DERIV_API_TOKEN:
         return jsonify({
@@ -414,7 +464,8 @@ def place_trade():
         if "buy" in result:
             contract_id = result["buy"]["contract_id"]
             if stop_loss > 0 or take_profit > 0:
-                position_monitor.track(contract_id, symbol, stop_loss, take_profit)
+                position_monitor.track(contract_id, symbol, stop_loss, take_profit,
+                                       break_even=break_even, trail=trail)
             # Record in the in-app ledger so history/positions can show the
             # instrument, lot size and SL/TP (Deriv omits these fields).
             trade_ledger[contract_id] = {
