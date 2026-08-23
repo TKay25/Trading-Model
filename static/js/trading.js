@@ -135,10 +135,9 @@ class TradingControls {
             input.value = '';
             if (warnEl) warnEl.classList.add('d-none');
 
-            // Deriv API tokens are letters + digits only. Warn (and block submit)
-            // if the pasted value contains anything else, so we don't waste a
-            // round-trip on a token that can never be valid.
-            const isValidToken = (v) => /^[a-zA-Z0-9]+$/.test(v.trim());
+            // Accept whatever token the user provides (no format restriction).
+            // Deriv's server is the final judge of whether it's valid.
+            const isValidToken = (v) => v.trim().length > 0;
             const updateWarn = () => {
                 if (warnEl) warnEl.classList.toggle('d-none', isValidToken(input.value));
             };

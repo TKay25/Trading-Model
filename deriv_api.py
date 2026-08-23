@@ -1,6 +1,7 @@
 """Deriv API WebSocket client for real-time trading."""
 import json
 import asyncio
+import traceback
 import websockets
 import logging
 from datetime import datetime
@@ -45,7 +46,22 @@ class DerivAPI:
             logger.error("Timed out connecting to Deriv WebSocket API")
             return False
         except Exception as e:
-            logger.error(f"Failed to connect to Deriv: {e}")
+            # Print the FULL error as-is: the whole traceback plus, when Deriv
+            # rejects the WebSocket handshake, the complete HTTP response
+            # (status code, headers and raw body) so nothing is hidden.
+            logger.error(f"Failed to connect to Deriv: {e!r}")
+            logger.error("Full exception traceback:\n" + traceback.format_exc())
+            if isinstance(e, websockets.exceptions.InvalidStatus):
+                resp = getattr(e, "response", None)
+                if resp is not None:
+                    body = bytes(getattr(resp, "body", b"") or b"").decode("utf-8", errors="replace")
+                    logger.error(
+                        "Deriv full HTTP response -> status: %s %s",
+                        getattr(resp, "status_code", "?"),
+                        getattr(resp, "reason_phrase", "?"),
+                    )
+                    logger.error("Deriv response headers: %s", dict(getattr(resp, "headers", {}) or {}))
+                    logger.error("Deriv response body (as-is): %s", body)
             return False
 
     async def authenticate(self):
@@ -83,6 +99,8 @@ class DerivAPI:
 
         err = response.get("error", {}).get("message", str(response))
         logger.error(f"Authentication failed: {err}")
+        # Print the entire response as returned by Deriv, unchanged.
+        logger.error(f"Full authorize response (as-is): {json.dumps(response)}")
         return False
 
     async def get_ticks(self, symbol: str, count: int = 100):
