@@ -135,20 +135,11 @@ class TradingControls {
             input.value = '';
             if (warnEl) warnEl.classList.add('d-none');
 
-            // Accept whatever token the user provides (no format restriction).
-            // Deriv's server is the final judge of whether it's valid.
-            const isValidToken = (v) => v.trim().length > 0;
-            const updateWarn = () => {
-                if (warnEl) warnEl.classList.toggle('d-none', isValidToken(input.value));
-            };
-
+            // Accept whatever the user types — including blank. A blank value
+            // means "use the token in .env"; the backend handles that. Deriv's
+            // server is the final judge of whether a token is valid.
             const onOk = () => {
-                updateWarn();
-                if (!isValidToken(input.value)) {
-                    if (warnEl) warnEl.classList.remove('d-none');
-                    input.focus();
-                    return;
-                }
+                if (warnEl) warnEl.classList.add('d-none');
                 finish(input.value);
             };
             const onHidden = () => finish(null);
@@ -171,7 +162,6 @@ class TradingControls {
             okBtn.addEventListener('click', onOk, { once: true });
             modalEl.addEventListener('hidden.bs.modal', onHidden, { once: true });
             input.addEventListener('keydown', onKey, { once: true });
-            input.addEventListener('input', updateWarn);
             modalEl.addEventListener('shown.bs.modal', () => input.focus(), { once: true });
 
             bootstrap.Modal.getOrCreateInstance(modalEl).show();

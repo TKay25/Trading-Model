@@ -10,9 +10,10 @@ class Config:
 
     # Deriv API Configuration
     # Use `or` so an empty value in .env still falls back to the default
-    DERIV_APP_ID = os.getenv("DERIV_APP_ID") or "1089"  # 1089 is Deriv's official app ID
-    DERIV_API_TOKEN = os.getenv("DERIV_API_TOKEN") or ""
-    DERIV_ENDPOINT = "wss://ws.derivws.com/websockets/v3?app_id="
+    DERIV_APP_ID = os.getenv("DERIV_APP_ID") or "1089"  # new-API app id (Deriv-App-ID header)
+    DERIV_API_TOKEN = os.getenv("DERIV_API_TOKEN") or ""  # Personal Access Token (PAT)
+    DERIV_ACCOUNT_TYPE = os.getenv("DERIV_ACCOUNT_TYPE") or "demo"  # 'demo' or 'real'
+    DERIV_ENDPOINT = "https://api.derivws.com"
 
     # Trading defaults
     DEFAULT_SYMBOL = os.getenv("DEFAULT_SYMBOL", "R_100")  # Volatility 100 Index

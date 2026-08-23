@@ -35,7 +35,8 @@ def _deriv_call(coro_factory, token=None, authenticated=False):
     Each request gets its own event loop and connection so that a slow or
     failed request can never poison the next one. When authenticated=True, the
     token priority is: explicit token > this session's connected token >
-    DERIV_API_TOKEN (.env). Public endpoints (candles/analyze) pass no token.
+    DERIV_API_TOKEN (.env), and the new-API OTP flow is used. Public endpoints
+    (candles/analyze) connect to the public WS (no token, no OTP).
     """
     effective_token = ""
     if authenticated:
@@ -44,11 +45,12 @@ def _deriv_call(coro_factory, token=None, authenticated=False):
     asyncio.set_event_loop(loop)
     api = DerivAPI(
         app_id=Config.DERIV_APP_ID,
-        api_token=effective_token
+        api_token=effective_token,
+        account_type=Config.DERIV_ACCOUNT_TYPE,
     )
     try:
-        if not loop.run_until_complete(api.connect()):
-            raise ConnectionError("Could not connect to the Deriv WebSocket API")
+        # connect() raises on failure (with the full error already logged)
+        loop.run_until_complete(api.connect(authenticated=authenticated))
         return loop.run_until_complete(coro_factory(api))
     finally:
         try:
@@ -277,7 +279,7 @@ def place_trade():
                 "success": True,
                 "contract_id": result["buy"]["contract_id"],
                 "transaction_id": result["buy"].get("transaction_id"),
-                "price": result["buy"].get("price"),
+                "price": result["buy"].get("buy_price"),
                 "balance_after": result["buy"].get("balance_after"),
             })
         else:

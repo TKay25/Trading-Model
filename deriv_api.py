@@ -1,108 +1,152 @@
-"""Deriv API WebSocket client for real-time trading."""
+"""Deriv API WebSocket client for real-time trading (NEW Deriv API).
+
+Uses Deriv's NEW API:
+  - REST base: https://api.derivws.com
+  - Auth: "Deriv-App-ID" header + "Authorization: Bearer <PAT>" (PAT = Personal
+    Access Token, e.g. tokens starting with `pat_`).
+  - Public market data: wss://api.derivws.com/trading/v1/options/ws/public (no auth)
+  - Account WebSocket (demo/real): URL obtained from the REST OTP endpoint.
+    The OTP is single-use and valid for 120 seconds.
+"""
 import json
 import asyncio
 import traceback
+import urllib.request
+import urllib.error
 import websockets
 import logging
-from datetime import datetime
-from flask import current_app
 
 logger = logging.getLogger(__name__)
 
+PUBLIC_WS_URL = "wss://api.derivws.com/trading/v1/options/ws/public"
+REST_BASE = "https://api.derivws.com"
+
 
 class DerivAPI:
-    """WebSocket client for interacting with the Deriv trading API."""
+    """WebSocket client for interacting with the Deriv trading API (new API)."""
 
-    def __init__(self, app_id: str, api_token: str = ""):
+    def __init__(self, app_id: str, api_token: str = "", account_type: str = "demo"):
         self.app_id = app_id
         self.api_token = api_token
-        self.ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
+        self.account_type = account_type  # 'demo' or 'real'
         self._ws = None
         self._authenticated = False
         self._pending_requests = {}
         self._listen_task = None
         self._request_counter = 0
 
-    async def connect(self, timeout: float = 20.0):
-        """Establish WebSocket connection to Deriv."""
+    # ------------------------------------------------------------------
+    # REST helpers (new API auth: Deriv-App-ID header + Bearer token)
+    # ------------------------------------------------------------------
+    def _rest_headers(self):
+        headers = {
+            "Deriv-App-ID": self.app_id,
+            "Accept": "application/json",
+        }
+        if self.api_token:
+            headers["Authorization"] = f"Bearer {self.api_token}"
+        return headers
+
+    def _rest(self, method: str, path: str, body=None):
+        """Synchronous REST call against the new Deriv API.
+
+        Returns (status_code, parsed_json). Raises ConnectionError with the full
+        server response on HTTP errors so nothing is hidden.
+        """
+        url = REST_BASE + path
+        req = urllib.request.Request(url, method=method, headers=self._rest_headers())
+        if body is not None:
+            req.data = json.dumps(body).encode("utf-8")
+            req.add_header("Content-Type", "application/json")
         try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.status, json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            logger.error(f"Deriv REST {method} {path} -> HTTP {e.code}: {err_body}")
+            raise ConnectionError(
+                f"Deriv REST {method} {path} failed: HTTP {e.code}: {err_body}"
+            ) from None
+        except Exception as e:
+            logger.error(f"Deriv REST {method} {path} failed: {e!r}")
+            logger.error("Full exception traceback:\n" + traceback.format_exc())
+            raise
+
+    async def _get_accounts(self):
+        _, data = self._rest("GET", "/trading/v1/options/accounts")
+        return data.get("data", [])
+
+    async def _get_otp_ws_url(self, account_id: str) -> str:
+        _, data = self._rest(
+            "POST", f"/trading/v1/options/accounts/{account_id}/otp", body={}
+        )
+        url = (data.get("data") or {}).get("url")
+        if not url:
+            raise ConnectionError(f"OTP response missing 'data.url': {json.dumps(data)}")
+        return url
+
+    def _pick_account_id(self, accounts) -> str:
+        for acc in accounts:
+            if acc.get("account_type") == self.account_type:
+                return acc.get("account_id")
+        if accounts:
+            kinds = sorted({a.get("account_type") for a in accounts})
+            raise ConnectionError(
+                f"No '{self.account_type}' account found. Available: {kinds}"
+            )
+        raise ConnectionError("Deriv returned no trading accounts")
+
+    # ------------------------------------------------------------------
+    # Connection (new API)
+    # ------------------------------------------------------------------
+    async def connect(self, timeout: float = 20.0, authenticated: bool = False):
+        """Establish a WebSocket connection to Deriv.
+
+        authenticated=False -> public endpoint (market data, no token required).
+        authenticated=True  -> REST OTP flow (requires app_id + PAT token):
+                               list accounts -> pick demo/real -> get OTP URL,
+                               then connect to the account-scoped WebSocket.
+        Raises on failure after logging the full error.
+        """
+        try:
+            if authenticated:
+                if not self.api_token:
+                    raise ConnectionError("No API token provided for authenticated connection")
+                accounts = await self._get_accounts()
+                account_id = self._pick_account_id(accounts)
+                ws_url = await self._get_otp_ws_url(account_id)
+                self._authenticated = True
+                logger.info(
+                    "Authenticated via OTP (account=%s, type=%s)",
+                    account_id, self.account_type,
+                )
+            else:
+                ws_url = PUBLIC_WS_URL
+
             self._ws = await asyncio.wait_for(
-                websockets.connect(self.ws_url, ping_interval=20, ping_timeout=20),
+                websockets.connect(ws_url, ping_interval=20, ping_timeout=20),
                 timeout=timeout
             )
-            logger.info("Connected to Deriv WebSocket API")
+            logger.info(
+                "Connected to Deriv WebSocket API (%s)",
+                "authenticated" if authenticated else "public",
+            )
 
-            # Start the background listener that routes responses to pending requests.
-            # Without this, _send_request() would wait forever.
+            # Background listener routes responses to pending requests.
             self._listen_task = asyncio.ensure_future(self._listen())
-
-            if self.api_token:
-                ok = await self.authenticate()
-                if not ok:
-                    logger.warning("Authentication failed with the provided token")
-
             return True
         except asyncio.TimeoutError:
             logger.error("Timed out connecting to Deriv WebSocket API")
-            return False
+            raise
         except Exception as e:
-            # Print the FULL error as-is: the whole traceback plus, when Deriv
-            # rejects the WebSocket handshake, the complete HTTP response
-            # (status code, headers and raw body) so nothing is hidden.
+            # Print the FULL error as-is so nothing is hidden.
             logger.error(f"Failed to connect to Deriv: {e!r}")
             logger.error("Full exception traceback:\n" + traceback.format_exc())
-            if isinstance(e, websockets.exceptions.InvalidStatus):
-                resp = getattr(e, "response", None)
-                if resp is not None:
-                    body = bytes(getattr(resp, "body", b"") or b"").decode("utf-8", errors="replace")
-                    logger.error(
-                        "Deriv full HTTP response -> status: %s %s",
-                        getattr(resp, "status_code", "?"),
-                        getattr(resp, "reason_phrase", "?"),
-                    )
-                    logger.error("Deriv response headers: %s", dict(getattr(resp, "headers", {}) or {}))
-                    logger.error("Deriv response body (as-is): %s", body)
-            return False
+            raise
 
-    async def authenticate(self):
-        """Authenticate with the API token."""
-        if not self.api_token:
-            logger.warning("No API token provided for authentication")
-            return False
-
-        token = self.api_token
-        masked = f"{token[:2]}...{token[-2:]} (len={len(token)})" if len(token) > 4 else "(short)"
-
-        # Diagnostic: Deriv API tokens are letters+digits only. If this token has
-        # other characters (e.g. an underscore or space) it will be rejected, and
-        # this log lets us see that structure without printing the secret.
-        bad = [(i, repr(ch)) for i, ch in enumerate(token) if not ch.isalnum()]
-        if bad:
-            logger.warning(f"API token has non-alphanumeric chars at {bad}: {masked}")
-        else:
-            logger.info(f"Authorizing with clean token {masked}")
-
-        auth_req = {
-            "authorize": token
-        }
-        response = await self._send_request(auth_req)
-
-        # NOTE: Deriv returns msg_type "authorize" on BOTH success and failure,
-        # so we must confirm there's no error and the "authorize" payload exists.
-        if (response.get("msg_type") == "authorize"
-                and "error" not in response
-                and "authorize" in response):
-            self._authenticated = True
-            loginid = response.get("authorize", {}).get("loginid", "unknown")
-            logger.info(f"Authenticated as {loginid}")
-            return True
-
-        err = response.get("error", {}).get("message", str(response))
-        logger.error(f"Authentication failed: {err}")
-        # Print the entire response as returned by Deriv, unchanged.
-        logger.error(f"Full authorize response (as-is): {json.dumps(response)}")
-        return False
-
+    # ------------------------------------------------------------------
+    # Market data (public, no auth required)
+    # ------------------------------------------------------------------
     async def get_ticks(self, symbol: str, count: int = 100):
         """Fetch historical tick data for a symbol."""
         ticks_req = {
@@ -137,13 +181,11 @@ class DerivAPI:
         req = {"active_symbols": "brief"}
         return await self._send_request(req)
 
-    async def get_asset_index(self):
-        """Get asset index / market data."""
-        req = {"asset_index": 1}
-        return await self._send_request(req)
-
+    # ------------------------------------------------------------------
+    # Trading (auth required)
+    # ------------------------------------------------------------------
     async def buy_contract(self, symbol: str, amount: float, contract_type: str = "CALL",
-                          duration: int = 1, duration_unit: str = "m"):
+                           duration: int = 1, duration_unit: str = "m"):
         """Place a trade.
 
         Args:
@@ -170,7 +212,10 @@ class DerivAPI:
 
     async def _buy_proposal(self, symbol: str, amount: float, contract_type: str,
                             duration: int, duration_unit: str):
-        """Get a price proposal for a contract before buying."""
+        """Get a price proposal for a contract before buying.
+
+        New API uses `underlying_symbol` instead of legacy `symbol`.
+        """
         proposal_req = {
             "proposal": 1,
             "amount": amount,
@@ -180,14 +225,18 @@ class DerivAPI:
             "currency": "USD",
             "duration": duration,
             "duration_unit": duration_unit,
-            "symbol": symbol
+            "underlying_symbol": symbol
         }
         return await self._send_request(proposal_req)
 
     async def sell_contract(self, contract_id: str):
-        """Sell/close an existing contract before expiry."""
+        """Sell/close an existing contract before expiry.
+
+        New API requires `price` (0 = sell at market).
+        """
         sell_req = {
-            "sell": contract_id
+            "sell": int(contract_id),
+            "price": 0
         }
         return await self._send_request(sell_req)
 
@@ -212,6 +261,9 @@ class DerivAPI:
         req = {"balance": 1}
         return await self._send_request(req)
 
+    # ------------------------------------------------------------------
+    # Request/response plumbing (response shapes are the same as legacy)
+    # ------------------------------------------------------------------
     async def _send_request(self, request: dict, timeout: float = 20.0) -> dict:
         """Send a request and wait for the response.
 
@@ -255,9 +307,6 @@ class DerivAPI:
                     future = self._pending_requests.pop(req_id, None)
                     if future and not future.done():
                         future.set_result(message)
-                elif data.get("msg_type") == "tick":
-                    # Handle real-time tick updates
-                    pass  # Will be used for live chart updates
         except websockets.exceptions.ConnectionClosed:
             logger.warning("Deriv WebSocket connection closed")
         except Exception as e:
