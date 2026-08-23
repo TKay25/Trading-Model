@@ -54,8 +54,20 @@ class DerivAPI:
             logger.warning("No API token provided for authentication")
             return False
 
+        token = self.api_token
+        masked = f"{token[:2]}...{token[-2:]} (len={len(token)})" if len(token) > 4 else "(short)"
+
+        # Diagnostic: Deriv API tokens are letters+digits only. If this token has
+        # other characters (e.g. an underscore or space) it will be rejected, and
+        # this log lets us see that structure without printing the secret.
+        bad = [(i, repr(ch)) for i, ch in enumerate(token) if not ch.isalnum()]
+        if bad:
+            logger.warning(f"API token has non-alphanumeric chars at {bad}: {masked}")
+        else:
+            logger.info(f"Authorizing with clean token {masked}")
+
         auth_req = {
-            "authorize": self.api_token
+            "authorize": token
         }
         response = await self._send_request(auth_req)
 

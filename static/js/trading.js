@@ -129,11 +129,29 @@ class TradingControls {
             const input = document.getElementById('tokenModalInput');
             const hintEl = document.getElementById('tokenModalHint');
             const okBtn = document.getElementById('tokenModalOk');
+            const warnEl = document.getElementById('tokenModalWarn');
 
             hintEl.textContent = hint;
             input.value = '';
+            if (warnEl) warnEl.classList.add('d-none');
 
-            const onOk = () => finish(input.value);
+            // Deriv API tokens are letters + digits only. Warn (and block submit)
+            // if the pasted value contains anything else, so we don't waste a
+            // round-trip on a token that can never be valid.
+            const isValidToken = (v) => /^[a-zA-Z0-9]+$/.test(v.trim());
+            const updateWarn = () => {
+                if (warnEl) warnEl.classList.toggle('d-none', isValidToken(input.value));
+            };
+
+            const onOk = () => {
+                updateWarn();
+                if (!isValidToken(input.value)) {
+                    if (warnEl) warnEl.classList.remove('d-none');
+                    input.focus();
+                    return;
+                }
+                finish(input.value);
+            };
             const onHidden = () => finish(null);
             const onKey = (e) => {
                 if (e.key === 'Enter') {
@@ -154,6 +172,7 @@ class TradingControls {
             okBtn.addEventListener('click', onOk, { once: true });
             modalEl.addEventListener('hidden.bs.modal', onHidden, { once: true });
             input.addEventListener('keydown', onKey, { once: true });
+            input.addEventListener('input', updateWarn);
             modalEl.addEventListener('shown.bs.modal', () => input.focus(), { once: true });
 
             bootstrap.Modal.getOrCreateInstance(modalEl).show();
