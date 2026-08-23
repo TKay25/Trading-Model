@@ -60,6 +60,10 @@ class PositionMonitor:
         with self._lock:
             self._limits.pop(int(contract_id), None)
 
+    def untrack_all(self):
+        with self._lock:
+            self._limits.clear()
+
     def tracked_count(self):
         with self._lock:
             return len(self._limits)
@@ -148,11 +152,16 @@ class PositionMonitor:
                 logger.info("Break-even reached for %s: profit=%.2f (SL moved to 0)", cid, profit)
 
             # --- Trailing: keep the stop a fraction of TP below the best profit ---
-            if lim.get("trail"):
+            # Only activates once the position has actually been in profit
+            # (max_profit > 0), and never moves the stop below the original
+            # stop-loss level — otherwise a fresh position with trail on would
+            # be stopped out at $0 profit the moment it ticks slightly red.
+            if lim.get("trail") and tp:
                 if profit > lim["max_profit"]:
                     lim["max_profit"] = profit
-                if tp:
-                    candidate = max(0.0, lim["max_profit"] - tp * lim.get("trail_pct", 0.5))
+                if lim["max_profit"] > 0:
+                    base = -float(lim.get("stop_loss") or 0)
+                    candidate = max(base, lim["max_profit"] - tp * lim.get("trail_pct", 0.5))
                     if candidate > stop:
                         stop = candidate
                         lim["stop"] = candidate

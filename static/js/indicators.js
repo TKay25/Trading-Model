@@ -696,6 +696,34 @@ class RiskMetrics {
         out.es99 = -tailMean(0.01) * 100;
         return out;
     }
+
+    /**
+     * Compute VaR / ES from ACTUAL trade results (settled profit/loss values in $).
+     * Unlike calculate() (price volatility), this measures YOUR trading risk from
+     * your real outcomes. Returned values are $ loss magnitudes PER TRADE.
+     * Needs at least 5 settled trades to be meaningful (else all nulls).
+     */
+    calculateFromTrades(profits) {
+        const out = { var95: null, var99: null, es95: null, es99: null, count: 0, period: 'trade' };
+        const vals = (profits || []).filter(v => typeof v === 'number' && !isNaN(v));
+        if (vals.length < 5) return out;
+        const sorted = [...vals].sort((a, b) => a - b); // worst (most negative) first
+        const n = sorted.length;
+        out.count = n;
+        const percentile = (p) => sorted[Math.min(n - 1, Math.max(0, Math.floor(p * n)))];
+        const tailMean = (p) => {
+            const idx = Math.min(n - 1, Math.max(0, Math.floor(p * n)));
+            let sum = 0;
+            for (let i = 0; i <= idx; i++) sum += sorted[i];
+            return sum / (idx + 1);
+        };
+        // Profit/loss values are negative for losses; flip to a positive loss magnitude.
+        out.var95 = -percentile(0.05);
+        out.var99 = -percentile(0.01);
+        out.es95 = -tailMean(0.05);
+        out.es99 = -tailMean(0.01);
+        return out;
+    }
 }
 
 

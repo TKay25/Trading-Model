@@ -24,7 +24,10 @@ class TradingDashboardApp {
 
         // Analytics / trading helpers
         this._historyRows = [];
-        this._autoTradeCooldown = 0;
+        this._autoTradeNotified = {};    // `auto:${symbol}:${tf}:${action}` -> last trade ts
+        this._autoTradeTimeframes = ['5m', '15m'];   // ONLY auto-trade these timeframes
+        this._scannerSignals = [];
+        this._tradeRisk = null;          // VaR/ES from ACTUAL trade results
         this._audioCtx = null;
 
         // Modules
@@ -69,12 +72,14 @@ class TradingDashboardApp {
         this.autoTradeStrength = document.getElementById('autoTradeStrength');
         this.autoStrengthVal = document.getElementById('autoStrengthVal');
         this.autoTradePaper = document.getElementById('autoTradePaper');
+        this.autoModeBadge = document.getElementById('autoModeBadge');
 
         // Performance / analytics
         this.equityCanvas = document.getElementById('equityCanvas');
         this.runBacktest = document.getElementById('runBacktest');
         this.backtestBox = document.getElementById('backtestBox');
         this.exportCsv = document.getElementById('exportCsv');
+        this.resetHistory = document.getElementById('resetHistory');
 
         this._bindEvents();
         this._loadInitialData();
@@ -119,6 +124,8 @@ class TradingDashboardApp {
         if (this.refreshPositionsBtn) {
             this.refreshPositionsBtn.addEventListener('click', () => this._loadPositions());
         }
+        const closeAllBtn = document.getElementById('closeAllPositions');
+        if (closeAllBtn) closeAllBtn.addEventListener('click', () => this._closeAllPositions());
 
         // $ SL/TP -> market points translation (live while typing)
         const slIn = document.getElementById('stopLoss');
@@ -147,9 +154,24 @@ class TradingDashboardApp {
             });
         }
 
-        // Backtest + CSV export.
+        // Auto-trade LIVE vs PAPER indicator.
+        if (this.autoTradePaper) this.autoTradePaper.addEventListener('change', () => this._updateAutoMode());
+        this._updateAutoMode();
+
+        // Backtest + CSV export + reset.
         if (this.runBacktest) this.runBacktest.addEventListener('click', () => this._runBacktest());
         if (this.exportCsv) this.exportCsv.addEventListener('click', () => this._exportCsv());
+        if (this.resetHistory) this.resetHistory.addEventListener('click', () => this._resetHistory());
+    }
+
+    _updateAutoMode() {
+        const paper = !!(this.autoTradePaper && this.autoTradePaper.checked);
+        if (this.autoModeBadge) {
+            this.autoModeBadge.textContent = paper ? 'PAPER' : 'LIVE';
+            this.autoModeBadge.className = 'auto-mode-badge ' + (paper ? 'paper' : 'live');
+        }
+        const box = document.querySelector('.auto-trade-box');
+        if (box) box.classList.toggle('live', !paper);
     }
 
     /**
@@ -205,7 +227,7 @@ class TradingDashboardApp {
                     symbol: this.symbol,
                     symbols: this._scannerSymbols(),
                     timeframes: this._scannerTimeframes,
-                    count: 150,
+                    count: 100,
                 }),
             });
             const data = await resp.json();
@@ -242,7 +264,7 @@ class TradingDashboardApp {
             const signal = this.signalEngine.generate(tdi, patterns, candles, { stake, payoutRatio: this._payoutRatio });
             const key = `${r.symbol}:${r.timeframe}`;
             currentActions[key] = signal.action || 'NEUTRAL';
-            analyzed.push({ symbol: r.symbol, timeframe: r.timeframe, candles, signal });
+            analyzed.push({ symbol: r.symbol, timeframe: r.timeframe, candles, tdi, signal });
         });
 
         // Prune alert keys whose signal has since disappeared.
@@ -319,6 +341,10 @@ class TradingDashboardApp {
 
         const card = document.getElementById('scannerCard');
         if (card) card.classList.toggle('has-signal', marketCount > 0);
+
+        // Auto-trade any strong all-aligned signal across ALL scanned markets.
+        this._scannerSignals = analyzed;
+        this._maybeAutoTradeScanner();
     }
 
     /**
@@ -387,21 +413,59 @@ class TradingDashboardApp {
     }
 
     /**
-     * Auto-trade the all-aligned signal shown on the open chart, if enabled.
+     * Auto-trade rule: TDI aligned AND at least ONE other signal (M/W pattern or
+     * candlestick) aligned the same way. (The displayed Signal card keeps the
+     * stricter all-aligned rule; this is just the trade trigger.)
+     * @returns 'BUY' | 'SELL' | null
      */
-    _maybeAutoTrade(signal) {
+    _twoOfThreeAction(signal) {
+        if (!signal) return null;
+        const tdi = signal.tdiAction, pat = signal.patternAction, can = signal.candleAction;
+        if (tdi === 'BUY' && (pat === 'BUY' || can === 'BUY')) return 'BUY';
+        if (tdi === 'SELL' && (pat === 'SELL' || can === 'SELL')) return 'SELL';
+        return null;
+    }
+
+    /**
+     * Auto-trade the OPEN chart signal when TDI + any one other are aligned.
+     */
+    _maybeAutoTrade(signal, tdi, candles) {
+        const action = this._twoOfThreeAction(signal);
+        if (!action) return;
+        const strength = Math.round((this.signalEngine._strength(action, tdi, candles) || 0) * 100);
+        this._autoTradeSignal(this.symbol, this.timeframe, action, strength);
+    }
+
+    /**
+     * Auto-trade ANY TDI + one-other signal found by the TF scanner across all
+     * symbols/timeframes (still limited to the allowed auto-trade timeframes).
+     */
+    _maybeAutoTradeScanner() {
         if (!this.autoTradeToggle || !this.autoTradeToggle.checked) return;
-        const now = Date.now();
-        if (now < this._autoTradeCooldown) return;
-        const action = signal.action;
+        (this._scannerSignals || []).forEach(a => {
+            const action = this._twoOfThreeAction(a.signal);
+            if (!action) return;
+            const strength = Math.round((this.signalEngine._strength(action, a.tdi, a.candles) || 0) * 100);
+            this._autoTradeSignal(a.symbol, a.timeframe, action, strength);
+        });
+    }
+
+    /**
+     * Fire one auto-trade for (symbol, timeframe, action) respecting the
+     * allowed-timeframe filter and a per-signal cooldown.
+     */
+    _autoTradeSignal(symbol, timeframe, action, strength) {
+        if (!this.autoTradeToggle || !this.autoTradeToggle.checked) return;
+        if (!this._autoTradeTimeframes.includes(timeframe)) return;  // e.g. only 5m/15m
         if (action !== 'BUY' && action !== 'SELL') return;
         const minStr = parseFloat(this.autoTradeStrength.value) || 0;
-        const strength = Math.round((signal.strength || 0) * 100);
         if (strength < minStr) return;
-        // 90s cooldown so live SSE ticks don't spam the same signal.
-        this._autoTradeCooldown = now + 90000;
+        const now = Date.now();
+        const key = `auto:${symbol}:${timeframe}:${action}`;
+        if ((this._autoTradeNotified[key] || 0) > now - 90000) return; // 90s per-signal cooldown
+        this._autoTradeNotified[key] = now;
         if (typeof tradingControls.autoTrade === 'function') {
-            tradingControls.autoTrade(action, strength, this.autoTradePaper && this.autoTradePaper.checked);
+            tradingControls.autoTrade(action, strength, this.autoTradePaper && this.autoTradePaper.checked, symbol, timeframe);
         }
     }
 
@@ -428,6 +492,9 @@ class TradingDashboardApp {
 
     _updatePerformance(rows) {
         const settled = (rows || []).filter(r => r.status !== 'open' && typeof r.profit === 'number');
+        // VaR/ES tiles = risk from ACTUAL trade results (per trade), not price.
+        this._tradeRisk = this.risk.calculateFromTrades(settled.map(r => r.profit));
+        this._updateRiskDisplay(this._tradeRisk);
         const set = (id, val, cls) => {
             const el = document.getElementById(id);
             if (!el) return;
@@ -453,8 +520,8 @@ class TradingDashboardApp {
         ordered.forEach(r => { cum += r.profit; if (cum > peak) peak = cum; const dd = peak - cum; if (dd > maxDd) maxDd = dd; });
 
         const rate = (arr) => arr.length ? Math.round(arr.filter(r => r.profit > 0).length / arr.length * 100) + '%' : '--';
-        const call = settled.filter(r => /CALL/i.test(r.contract_type || ''));
-        const put = settled.filter(r => /PUT/i.test(r.contract_type || ''));
+        const call = settled.filter(r => /CALL|MULTUP/i.test(r.contract_type || ''));
+        const put = settled.filter(r => /PUT|MULTDOWN/i.test(r.contract_type || ''));
 
         set('perfTrades', n);
         set('perfWinRate', Math.round(wins.length / n * 100) + '%');
@@ -601,6 +668,35 @@ class TradingDashboardApp {
                 <span>Win rate: <b class="${res.winRate >= 50 ? 'pos' : 'neg'}">${res.winRate}%</b></span>
                 <span>Avg |move|: <b>${res.avgMove.toFixed(2)}%</b> <small>(next ${8} bars)</small></span>
             </div>`;
+    }
+
+    /**
+     * Clear all recorded trades and start history fresh from now.
+     */
+    async _resetHistory() {
+        if (!confirm('Clear all trades and start afresh? Trades placed after this will show; older ones are hidden.')) return;
+        try {
+            const resp = await fetch('/api/clear', { method: 'POST' });
+            const data = await resp.json();
+            if (data.success) {
+                this._historyRows = [];
+                this._scannerSignals = [];
+                this._autoTradeNotified = {};
+                if (this.historyBody) {
+                    this.historyBody.innerHTML = '<tr class="history-empty"><td colspan="9"><i class="bi bi-journal-x"></i>Fresh start — no trades yet.</td></tr>';
+                }
+                if (this.positionsBody) {
+                    this.positionsBody.innerHTML = '<div class="positions-empty"><i class="bi bi-briefcase"></i>No open positions.</div>';
+                }
+                this._updatePerformance([]);
+                this._renderEquityCurve([]);
+                this._notify('Reset', 'All trades cleared. History starts fresh from now.');
+            } else {
+                this._notify('Reset Failed', data.error || 'Could not reset history');
+            }
+        } catch (err) {
+            this._notify('Reset Error', String(err));
+        }
     }
 
     /**
@@ -785,23 +881,43 @@ class TradingDashboardApp {
     }
 
     _renderPositions(positions) {
+        const countEl = document.getElementById('positionsCount');
+        const netEl = document.getElementById('positionsNet');
+        const openEl = document.getElementById('statOpen');
+        const count = (positions && positions.length) || 0;
+        if (countEl) countEl.textContent = count;
+        if (openEl) openEl.textContent = count;
+
         if (!positions || !positions.length) {
             this.positionsBody.innerHTML = '<div class="positions-empty"><i class="bi bi-briefcase"></i>No open positions.</div>';
+            if (netEl) {
+                netEl.className = 'positions-net';
+                netEl.textContent = 'Net: $0.00';
+                netEl.title = 'No open positions';
+            }
             return;
         }
+        let netPl = 0, exposure = 0, hasPl = false;
         this.positionsBody.innerHTML = positions.map(p => {
             const type = p.contract_type || '--';
             const dirClass = /DOWN|PUT|SELL/i.test(type) ? 'down' : 'up';
             const stake = (p.stake ?? 0).toFixed(2);
+            exposure += p.stake || 0;
             const expiry = p.expiry_time ? new Date(p.expiry_time * 1000).toLocaleString() : '--';
             const lot = Number(p.lot_size ?? p.stake ?? 0);
             const sl = (p.stop_loss ?? 0) > 0 ? `$${(+p.stop_loss).toFixed(2)}` : '—';
             const tp = (p.take_profit ?? 0) > 0 ? `$${(+p.take_profit).toFixed(2)}` : '—';
+            const profit = p.profit;
+            const hasProfit = typeof profit === 'number' && !isNaN(profit);
+            if (hasProfit) { netPl += profit; hasPl = true; }
+            const plCls = hasProfit ? (profit >= 0 ? 'pos' : 'neg') : '';
+            const plTxt = hasProfit ? (profit >= 0 ? '+' : '') + profit.toFixed(2) : '—';
             return `
             <div class="position-item" data-contract-id="${p.contract_id}">
                 <div class="position-top">
                     <span class="position-symbol">${p.symbol || '--'}</span>
                     <span class="position-type ${dirClass}">${type}</span>
+                    <span class="position-pl ${plCls}">${plTxt}</span>
                     <span class="position-stake">$${stake}</span>
                 </div>
                 <div class="position-meta">
@@ -816,14 +932,49 @@ class TradingDashboardApp {
             </div>`;
         }).join('');
 
-        const openEl = document.getElementById('statOpen');
-        if (openEl) openEl.textContent = positions.length;
+        // Net open position (unrealized P/L) + exposure in the header.
+        if (netEl) {
+            if (hasPl) {
+                const netCls = netPl >= 0 ? 'pos' : 'neg';
+                netEl.className = `positions-net ${netCls}`;
+                netEl.textContent = `Net P/L: ${netPl >= 0 ? '+' : ''}$${netPl.toFixed(2)}`;
+                netEl.title = `Net unrealized P/L · Exposure: $${exposure.toFixed(2)}`;
+            } else {
+                netEl.className = 'positions-net';
+                netEl.textContent = 'Net: $0.00';
+                netEl.title = 'No profit data for open positions';
+            }
+        }
 
         this.positionsBody.querySelectorAll('.position-item').forEach(item => {
             const cid = item.dataset.contractId;
             const closeBtn = item.querySelector('.pos-close');
             closeBtn.addEventListener('click', () => this._closePosition(cid, closeBtn));
         });
+    }
+
+    /**
+     * Close every open position at once.
+     */
+    async _closeAllPositions() {
+        if (!confirm('Close ALL open positions?')) return;
+        const btn = document.getElementById('closeAllPositions');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-x-circle"></i> Closing…'; }
+        try {
+            const resp = await fetch('/api/close_all', { method: 'POST' });
+            const data = await resp.json();
+            if (data.success) {
+                this._notify('Closed All', `Closed ${data.closed} open position(s)`);
+                this._loadPositions();
+                this._loadHistory();
+            } else {
+                this._notify('Close Failed', data.error || 'Could not close positions');
+            }
+        } catch (err) {
+            this._notify('Close Error', String(err));
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-x-circle"></i> Close All'; }
+        }
     }
 
     async _closePosition(contractId, btn) {
@@ -853,6 +1004,8 @@ class TradingDashboardApp {
             this.positionsBody.innerHTML =
                 '<div class="positions-empty">Connect to view open positions.</div>';
         }
+        const openEl = document.getElementById('statOpen');
+        if (openEl) openEl.textContent = '0';
     }
 
     _notify(title, message) {
@@ -979,16 +1132,12 @@ class TradingDashboardApp {
      * Display VaR / ES in money terms: balance x risk% (per candle).
      */
     _updateRiskDisplay(risk) {
-        const balEl = document.getElementById('balanceValue');
-        const balance = balEl ? parseFloat(balEl.textContent) : NaN;
-        const money = (pct) => {
-            if (pct === null || pct === undefined || isNaN(pct) || !isFinite(balance) || balance <= 0) return null;
-            return balance * (pct / 100);
-        };
-        const set = (id, pct) => {
+        // Values are $ loss magnitudes per trade (already in money terms).
+        const set = (id, val) => {
             const el = document.getElementById(id);
-            const val = money(pct);
-            if (el) el.textContent = val === null ? '--' : '$' + val.toFixed(2);
+            if (!el) return;
+            if (val === null || val === undefined || isNaN(val)) { el.textContent = '--'; return; }
+            el.textContent = '$' + val.toFixed(2);
         };
         set('statVar95', risk.var95);
         set('statVar99', risk.var99);
@@ -1000,7 +1149,7 @@ class TradingDashboardApp {
      * Recompute the dollar VaR/ES tiles after the balance changes.
      */
     _refreshRiskMoney() {
-        if (this.lastRisk) this._updateRiskDisplay(this.lastRisk);
+        if (this._tradeRisk) this._updateRiskDisplay(this._tradeRisk);
         if (this.riskPct && this.riskPct.value) this._suggestLot();
     }
 
@@ -1066,8 +1215,8 @@ class TradingDashboardApp {
 
         // Risk metrics: Value at Risk / Expected Shortfall (95% / 99%)
         const risk = this.risk.calculate(candles);
-        this.lastRisk = risk;
-        this._updateRiskDisplay(risk);
+        this.lastRisk = risk;  // price-volatility risk — still used by the $->points SL/TP hint
+        // NOTE: the VaR/ES tiles are driven by TRADE results (see _updatePerformance).
 
         // Combined signal: TDI indicator + chart patterns (M/W + formations).
         const stake = parseFloat((document.getElementById('tradeLotSize') || {}).value) || 1;
@@ -1087,8 +1236,8 @@ class TradingDashboardApp {
         // Draw M (double-top) / W (double-bottom) shapes on the price chart.
         this.chart.drawMWPatterns(patterns);
 
-        // Auto-trade the all-aligned signal if enabled.
-        this._maybeAutoTrade(signal);
+        // Auto-trade if TDI + any one other signal align (if enabled).
+        this._maybeAutoTrade(signal, tdiValues, candles);
 
         // Refresh the $ SL/TP -> market points translation.
         this._updateSlTpTranslation();
@@ -1101,6 +1250,16 @@ class TradingDashboardApp {
     _updateSlTpTranslation() {
         const txtEl = document.getElementById('slTpTranslate');
         if (!txtEl) return;
+        // Multiplier positions: SL/TP are $ targets directly (no points conversion).
+        const multEl = document.getElementById('tradeMultiplier');
+        if (multEl && multEl.value) {
+            const sl = parseFloat((document.getElementById('stopLoss') || {}).value) || 0;
+            const tp = parseFloat((document.getElementById('takeProfit') || {}).value) || 0;
+            txtEl.textContent = (sl || tp)
+                ? `SL/TP are $ targets on the ${multEl.value}× multiplier position — open until hit or closed.`
+                : 'Set a $ SL/TP — the position stays open until TP/SL hits or you close it.';
+            return;
+        }
         const sl = parseFloat((document.getElementById('stopLoss') || {}).value) || 0;
         const tp = parseFloat((document.getElementById('takeProfit') || {}).value) || 0;
 
@@ -1186,9 +1345,11 @@ class TradingDashboardApp {
         if (strengthEl) {
             const pct = Math.round((signal.strength || 0) * 100);
             const cls = pct >= 50 ? 'strong' : (pct >= 25 ? 'mid' : 'weak');
+            const isDir = action === 'BUY' || action === 'SELL';
+            const ctx = isDir ? ` &middot; ${action}` : ' &middot; HOLD (no all-aligned signal)';
             strengthEl.innerHTML =
                 `<div class="strength-track"><div class="strength-fill ${cls}" style="width:${pct}%"></div></div>` +
-                `<span class="strength-label">Signal strength: ${pct}%</span>`;
+                `<span class="strength-label">Signal strength: ${pct}%${ctx}</span>`;
         }
 
         this.signalCard.className = `side-card ${cardClass}`.trim();

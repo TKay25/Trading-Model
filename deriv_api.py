@@ -189,6 +189,27 @@ class DerivAPI:
         req = {"active_symbols": "brief"}
         return await self._send_request(req)
 
+    async def get_valid_multipliers(self, symbol: str):
+        """Return the multiplier values Deriv accepts for `symbol`.
+
+        The acceptable multipliers differ per underlying (e.g. R_75/R_100 accept
+        50/100/200/300/500 but R_50 accepts 80/200/400/600/800), so the client
+        must use the symbol-specific set. The `contracts_for` request (new API
+        takes ONLY the symbol — no contract_type/currency allowed) returns a
+        `multiplier_range` on the MULTUP entry.
+        """
+        resp = await self._send_request({"contracts_for": symbol})
+        info = resp.get("contracts_for", {}) if isinstance(resp, dict) else {}
+        avail = info.get("available", []) if isinstance(info, dict) else []
+        values = []
+        for item in avail:
+            if isinstance(item, dict) and item.get("contract_type") == "MULTUP":
+                rng = item.get("multiplier_range", [])
+                if isinstance(rng, list):
+                    values = [int(v) for v in rng if isinstance(v, (int, float))]
+                break
+        return sorted(set(values))
+
     # ------------------------------------------------------------------
     # Trading (auth required)
     # ------------------------------------------------------------------
@@ -218,14 +239,39 @@ class DerivAPI:
         }
         return await self._send_request(buy_req)
 
+    async def buy_multiplier(self, symbol: str, amount: float, direction: str = "BUY",
+                             multiplier: int = 100):
+        """Open an open-ended MULTIPLIER position (day-trading product).
+
+        A multiplier position has NO fixed expiry: it stays open until the
+        take-profit/stop-loss is hit (or the loss exceeds the stake, closing at
+        100%) or the user closes it manually. P/L tracks the market in real time
+        and is multiplied by `multiplier` (valid: 50/100/200/300/500).
+        direction BUY -> MULTUP, SELL -> MULTDOWN.
+        """
+        if not self._authenticated:
+            raise PermissionError("Not authenticated. Please provide API token.")
+        contract_type = "MULTUP" if direction == "BUY" else "MULTDOWN"
+        proposal = await self._buy_proposal(
+            symbol, amount, contract_type, None, None,
+            extra={"multiplier": multiplier},
+        )
+        if not proposal or "proposal" not in proposal:
+            return {"error": "Failed to get proposal", "details": proposal}
+        proposal_id = proposal["proposal"]["id"]
+        buy_req = {"buy": proposal_id, "price": amount}
+        return await self._send_request(buy_req)
+
     async def _buy_proposal(self, symbol: str, amount: float, contract_type: str,
-                            duration: int, duration_unit: str, barrier: str = None):
+                            duration: int = None, duration_unit: str = None,
+                            barrier: str = None, extra: dict = None):
         """Get a price proposal for a contract before buying.
 
         New API uses `underlying_symbol` instead of legacy `symbol`. Standard
         CALL/PUT on synthetics must NOT include a barrier (Deriv returns
         `InvalidBarrier` otherwise); pass `barrier` only for contract types
-        that require one.
+        that require one. `duration=None` means open-ended (used by multipliers).
+        `extra` adds any additional proposal fields (e.g. multiplier).
         """
         proposal_req = {
             "proposal": 1,
@@ -233,10 +279,13 @@ class DerivAPI:
             "basis": "stake",
             "contract_type": contract_type,
             "currency": "USD",
-            "duration": duration,
-            "duration_unit": duration_unit,
             "underlying_symbol": symbol
         }
+        if duration is not None:
+            proposal_req["duration"] = duration
+            proposal_req["duration_unit"] = duration_unit
+        if extra:
+            proposal_req.update(extra)
         if barrier:
             proposal_req["barrier"] = barrier
         return await self._send_request(proposal_req)

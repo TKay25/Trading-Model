@@ -34,31 +34,31 @@
                 <span class="stat-value" id="statOpen">0</span>
             </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" title="Per-trade risk from your ACTUAL trading results — 95% VaR of your profit/loss (needs ≥5 settled trades)">
             <div class="stat-icon stat-var"><i class="bi bi-shield-exclamation"></i></div>
             <div class="stat-info">
-                <span class="stat-label">VaR 95%</span>
+                <span class="stat-label">VaR 95% <small>/trade</small></span>
                 <span class="stat-value risk" id="statVar95">--</span>
             </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" title="Per-trade risk from your ACTUAL trading results — 99% VaR of your profit/loss (needs ≥5 settled trades)">
             <div class="stat-icon stat-var"><i class="bi bi-shield-exclamation"></i></div>
             <div class="stat-info">
-                <span class="stat-label">VaR 99%</span>
+                <span class="stat-label">VaR 99% <small>/trade</small></span>
                 <span class="stat-value risk" id="statVar99">--</span>
             </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" title="Expected shortfall — average worst per-trade loss beyond VaR, from your ACTUAL results">
             <div class="stat-icon stat-es"><i class="bi bi-shield-x"></i></div>
             <div class="stat-info">
-                <span class="stat-label">ES 95%</span>
+                <span class="stat-label">ES 95% <small>/trade</small></span>
                 <span class="stat-value risk-es" id="statEs95">--</span>
             </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" title="Expected shortfall — average worst per-trade loss beyond VaR, from your ACTUAL results">
             <div class="stat-icon stat-es"><i class="bi bi-shield-x"></i></div>
             <div class="stat-info">
-                <span class="stat-label">ES 99%</span>
+                <span class="stat-label">ES 99% <small>/trade</small></span>
                 <span class="stat-value risk-es" id="statEs99">--</span>
             </div>
         </div>
@@ -177,34 +177,36 @@
                 <span>Quick Trade</span>
             </div>
             <div class="side-card-body">
-                <div class="trade-row">
-                    <div class="trade-field flex-1">
-                        <label>Lot Size</label>
-                        <input type="number" id="tradeLotSize" value="0.10" min="0.001" step="0.001">
+                <div class="trade-grid">
+                    <div class="trade-field">
+                        <label>Lot Size ($)</label>
+                        <input type="number" id="tradeLotSize" value="1.00" min="0.35" step="0.01">
                     </div>
-                    <div class="trade-field flex-1">
-                        <label>Risk %</label>
-                        <input type="number" id="riskPct" value="" step="0.1" min="0.1" placeholder="e.g. 1">
+                    <div class="trade-field">
+                        <label>Multiplier</label>
+                        <select id="tradeMultiplier" class="trade-select">
+                            <option value="50">50×</option>
+                            <option value="100" selected>100×</option>
+                            <option value="200">200×</option>
+                            <option value="300">300×</option>
+                            <option value="500">500×</option>
+                        </select>
                     </div>
-                </div>
-                <p class="sl-tp-hint" id="riskHint">Set a Risk % to auto-suggest the lot size from your balance.</p>
-                <div class="trade-row">
-                    <div class="trade-field flex-1">
+                    <div class="trade-field">
                         <label>Stop Loss ($)</label>
                         <input type="number" id="stopLoss" step="0.01" placeholder="0.00">
                     </div>
-                    <div class="trade-field flex-1">
+                    <div class="trade-field">
                         <label>Take Profit ($)</label>
                         <input type="number" id="takeProfit" step="0.01" placeholder="0.00">
                     </div>
                 </div>
-                <p class="sl-tp-hint">SL/TP auto-close the position when profit/loss targets are hit.</p>
-                <p class="sl-tp-hint" id="slTpTranslate">Set a $ SL/TP to see the equivalent market points.</p>
-                <div class="trade-row">
-                    <label class="switch-label"><input type="checkbox" id="breakEvenToggle"> <span>Break-even</span></label>
-                    <label class="switch-label"><input type="checkbox" id="trailToggle"> <span>Trail SL</span></label>
-                </div>
+                <p class="sl-tp-hint" id="riskHint">Multiplier day-trade — stays open until SL/TP hits or you close it. P/L moves with the multiplier.</p>
                 <div class="trade-actions">
+                    <span class="trade-toggles">
+                        <label class="switch-label"><input type="checkbox" id="breakEvenToggle" checked> <span>Break-even</span></label>
+                        <label class="switch-label"><input type="checkbox" id="trailToggle" checked> <span>Trail SL</span></label>
+                    </span>
                     <button class="btn-buy" id="btnBuy">
                         <i class="bi bi-arrow-up-short"></i> Buy
                     </button>
@@ -212,18 +214,20 @@
                         <i class="bi bi-arrow-down-short"></i> Sell
                     </button>
                 </div>
+                <p class="sl-tp-hint" id="slTpTranslate">SL/TP are $ targets — the position stays open until TP/SL hits or you close it.</p>
                 <div class="auto-trade-box">
-                    <label class="switch-label auto-toggle">
-                        <input type="checkbox" id="autoTradeToggle">
-                        <span class="switch"></span>
-                        <span class="auto-label"><i class="bi bi-robot"></i> Auto-trade</span>
-                    </label>
-                    <div class="auto-trade-controls">
-                        <label class="auto-min">Min strength <span id="autoStrengthVal">60</span>%</label>
-                        <input type="range" id="autoTradeStrength" min="10" max="100" value="60" step="5">
-                        <label class="switch-label"><input type="checkbox" id="autoTradePaper" checked> <span>Paper mode</span></label>
+                    <div class="auto-trade-row">
+                        <label class="switch-label auto-toggle">
+                            <input type="checkbox" id="autoTradeToggle" checked>
+                            <span class="switch"></span>
+                            <span class="auto-label"><i class="bi bi-robot"></i> Auto-trade</span>
+                        </label>
+                        <label class="auto-min">Min <span id="autoStrengthVal">70</span>%</label>
+                        <label class="switch-label auto-paper"><input type="checkbox" id="autoTradePaper"> <span>Paper</span></label>
+                        <span id="autoModeBadge" class="auto-mode-badge live">LIVE</span>
+                        <input type="range" id="autoTradeStrength" min="10" max="100" value="70" step="5" class="auto-range">
                     </div>
-                    <p class="sl-tp-hint">Auto-trades the all-aligned signal on the open chart. Paper mode = simulated, no real trade.</p>
+                    <p class="sl-tp-hint auto-hint">Auto-trades 5m/15m signals ≥70% · Paper = simulated, no real trade.</p>
                 </div>
                 <div id="tradeStatus" class="trade-status d-none"></div>
             </div>
@@ -251,6 +255,9 @@
         <div class="history-actions">
             <button id="exportCsv" class="toolbar-btn" title="Export history to CSV">
                 <i class="bi bi-download"></i> CSV
+            </button>
+            <button id="resetHistory" class="toolbar-btn toolbar-danger" title="Clear all trades &amp; start fresh">
+                <i class="bi bi-trash"></i> Reset
             </button>
             <button id="refreshHistory" class="toolbar-btn" title="Refresh history">
                 <i class="bi bi-arrow-clockwise"></i>
@@ -283,9 +290,16 @@
 <div class="history-section">
     <div class="history-header">
         <span class="history-title"><i class="bi bi-briefcase"></i> Open Positions</span>
-        <button id="refreshPositions" class="toolbar-btn" title="Refresh positions">
-            <i class="bi bi-arrow-clockwise"></i>
-        </button>
+        <span id="positionsCount" class="positions-count">0</span>
+        <span id="positionsNet" class="positions-net" title="Net unrealized P/L of all open positions">Net: $0.00</span>
+        <div class="history-actions">
+            <button id="closeAllPositions" class="toolbar-btn toolbar-danger" title="Close all open trades">
+                <i class="bi bi-x-circle"></i> Close All
+            </button>
+            <button id="refreshPositions" class="toolbar-btn" title="Refresh positions">
+                <i class="bi bi-arrow-clockwise"></i>
+            </button>
+        </div>
     </div>
     <div id="positionsBody" class="positions-list">
         <div class="positions-empty">Connect to view open positions.</div>

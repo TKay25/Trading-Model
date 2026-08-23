@@ -618,7 +618,12 @@ body {
 .trade-row { display: flex; gap: 8px; }
 .flex-1 { flex: 1; }
 
-.trade-actions { display: flex; gap: 9px; margin-top: 4px; }
+/* 2x2 entry grid for the Quick Trade inputs (lot / multiplier / SL / TP) */
+.trade-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.trade-grid .trade-field { margin-bottom: 0; }
+
+.trade-actions { display: flex; gap: 9px; margin-top: 4px; align-items: center; }
+.trade-toggles { display: inline-flex; gap: 10px; margin-right: auto; flex-wrap: wrap; }
 
 .btn-buy, .btn-sell {
     flex: 1;
@@ -928,6 +933,38 @@ body {
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
 }
+
+.positions-count {
+    margin-left: auto;
+    font-size: 12px;
+    font-weight: 800;
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: rgba(59,130,246,0.14);
+    color: #93c5fd;
+    font-variant-numeric: tabular-nums;
+}
+.positions-net {
+    margin-right: 8px;
+    font-size: 12px;
+    font-weight: 800;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+}
+.positions-net.pos { color: var(--green-bright); background: var(--green-bg); border: 1px solid rgba(16,185,129,0.35); }
+.positions-net.neg { color: var(--red-bright); background: var(--red-bg); border: 1px solid rgba(239,68,68,0.35); }
+
+.position-pl {
+    font-size: 12px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+.position-pl.pos { color: var(--green-bright); }
+.position-pl.neg { color: var(--red-bright); }
 
 .position-meta {
     display: flex;
@@ -1427,8 +1464,29 @@ body {
 .auto-label { font-size: 12px; color: var(--text); }
 .auto-label i { color: var(--accent-2); margin-right: 4px; }
 .auto-trade-controls { display: flex; flex-direction: column; gap: 6px; }
-.auto-min { font-size: 11px; color: var(--text-secondary); }
+.auto-min { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
 .auto-trade-controls input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+/* Compact horizontal auto-trade row: toggle + min + paper + badge on one
+   line, slider drops to its own full-width line below. */
+.auto-trade-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.auto-trade-row .auto-toggle { width: auto; justify-content: flex-start; margin-bottom: 0; }
+.auto-paper { white-space: nowrap; }
+.auto-range { flex-basis: 100%; accent-color: var(--accent); margin-top: 2px; }
+.auto-hint { margin: 8px 0 0; }
+
+.auto-mode-badge {
+    font-size: 10px;
+    font-weight: 800;
+    padding: 2px 9px;
+    border-radius: 12px;
+    letter-spacing: 0.5px;
+    align-self: center;
+    white-space: nowrap;
+}
+.auto-mode-badge.live { color: var(--red-bright); background: var(--red-bg); border: 1px solid rgba(239,68,68,0.4); }
+.auto-mode-badge.paper { color: var(--text-secondary); background: var(--surface-2); border: 1px solid var(--border); }
+.auto-trade-box.live { border-color: rgba(239,68,68,0.45); box-shadow: inset 0 0 0 1px rgba(239,68,68,0.1); }
 
 /* Performance analytics */
 .history-actions { display: flex; align-items: center; gap: 8px; }
@@ -1470,6 +1528,7 @@ body {
 .stat-es { background: rgba(239,68,68,0.14); color: var(--red-bright); box-shadow: inset 0 0 0 1px rgba(239,68,68,0.25); }
 .stat-value.risk { color: #fbbf24; }
 .stat-value.risk-es { color: var(--red-bright); }
+.stat-label small { font-size: 8px; opacity: 0.7; font-weight: 600; }
 
 /* Tables */
 .history-table thead th { position: sticky; top: 0; z-index: 2; }
@@ -1482,6 +1541,7 @@ body {
 /* Toolbar buttons */
 .toolbar-btn, .theme-toggle { transition: transform 0.15s ease, border-color 0.15s, color 0.15s, box-shadow 0.15s; }
 .toolbar-btn:hover, .theme-toggle:hover { transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.toolbar-btn.toolbar-danger:hover { border-color: rgba(239,68,68,0.5); color: var(--red-bright); box-shadow: 0 0 10px rgba(239,68,68,0.2); }
 
 /* Empty states */
 .history-empty i, .positions-empty i { display: block; margin: 0 auto 8px; font-size: 26px; opacity: 0.35; }

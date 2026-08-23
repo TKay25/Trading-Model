@@ -3,6 +3,9 @@ import asyncio
 import json
 import logging
 import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, render_template, request, jsonify, session, Response
 from config import Config
 from deriv_api import DerivAPI
@@ -45,7 +48,14 @@ def _load_ledger():
             with open(LEDGER_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
-                    trade_ledger = data
+                    # JSON object keys are always strings, but Deriv's
+                    # profit_table/portfolio return contract_id as an INT and
+                    # /api/history & /api/positions look up the ledger by that
+                    # int. Normalize keys back to int so enrichment still works
+                    # after a restart (otherwise every settled row shows "--").
+                    trade_ledger = {
+                        int(k): v for k, v in data.items() if str(k).lstrip("-").isdigit()
+                    }
         except Exception:
             trade_ledger = {}
 
@@ -56,6 +66,14 @@ def _save_ledger():
             json.dump(trade_ledger, f)
     except Exception as e:
         logger.warning(f"Failed to save trade ledger: {e}")
+
+
+def _num(v):
+    """Best-effort float conversion; None for missing/non-numeric."""
+    try:
+        return float(v) if v is not None and str(v) != "" else None
+    except (TypeError, ValueError):
+        return None
 
 
 def init_services():
@@ -82,35 +100,47 @@ def init_services():
         position_monitor.start()
 
 
-def _deriv_call(coro_factory, token=None, authenticated=False):
+def _deriv_call(coro_factory, token=None, authenticated=False, timeout=25):
     """Open a fresh Deriv WebSocket connection, run coro_factory(api), and clean up.
 
     Each request gets its own event loop and connection so that a slow or
-    failed request can never poison the next one. When authenticated=True, the
-    token priority is: explicit token > this session's connected token >
-    DERIV_API_TOKEN (.env), and the new-API OTP flow is used. Public endpoints
-    (candles/analyze) connect to the public WS (no token, no OTP).
+    failed request can never poison the next one. A HARD overall timeout wraps
+    BOTH the connect and the call so no request can hang a gunicorn worker:
+    on Render, a stalled Deriv connect otherwise trips the worker timeout and
+    the worker gets killed (crash loop). A timeout here returns a clean error
+    instead.
+
+    When authenticated=True the token priority is: explicit token > this
+    session's connected token > DERIV_API_TOKEN (.env), and the new-API OTP
+    flow is used. Public endpoints connect to the public WS (no token, no OTP).
     """
     effective_token = ""
     if authenticated:
         effective_token = token or session.get("deriv_api_token") or Config.DERIV_API_TOKEN
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     api = DerivAPI(
         app_id=Config.DERIV_APP_ID,
         api_token=effective_token,
         account_type=Config.DERIV_ACCOUNT_TYPE,
     )
-    try:
-        # connect() raises on failure (with the full error already logged)
-        loop.run_until_complete(api.connect(authenticated=authenticated))
-        return loop.run_until_complete(coro_factory(api))
-    finally:
+
+    async def _runner():
         try:
-            loop.run_until_complete(api.close())
-        except Exception:
-            pass
-        loop.close()
+            await asyncio.wait_for(
+                api.connect(authenticated=authenticated, timeout=timeout),
+                timeout=timeout,
+            )
+            return await asyncio.wait_for(coro_factory(api), timeout=timeout)
+        finally:
+            try:
+                await asyncio.wait_for(api.close(), timeout=5)
+            except Exception:
+                pass
+
+    try:
+        return asyncio.run(_runner())
+    except (asyncio.TimeoutError, TimeoutError):
+        logger.error("Deriv request timed out after %ss", timeout)
+        raise TimeoutError(f"Deriv request timed out after {timeout}s")
 
 
 @app.after_request
@@ -127,11 +157,60 @@ def add_no_cache_headers(response):
     return response
 
 
+# Per-symbol valid multiplier cache (fetched from Deriv's contracts_for).
+# Valid multipliers differ per underlying: R_75/R_100 accept 50/100/200/300/500
+# but R_50 accepts 80/200/400/600/800 and R_10 accepts 400/1000/2000/3000/4000.
+_VALID_MULTIPLIERS = {}
+
+
+def _get_valid_multipliers(symbol):
+    """Return the multiplier values Deriv accepts for `symbol` (cached)."""
+    if symbol in _VALID_MULTIPLIERS:
+        return _VALID_MULTIPLIERS[symbol]
+    try:
+        async def _fetch(api):
+            return await api.get_valid_multipliers(symbol)
+        # contracts_for works on the public WS — no OTP, so a cache miss is fast.
+        values = _deriv_call(_fetch, authenticated=False, timeout=15)
+        if isinstance(values, list) and values:
+            _VALID_MULTIPLIERS[symbol] = values
+            return values
+    except Exception as e:
+        logger.warning("Failed to fetch valid multipliers for %s: %s", symbol, e)
+    return None
+
+
+def _warm_multiplier_cache():
+    """Pre-fetch valid multipliers for every scanner symbol in the background.
+
+    Runs once per process on startup so the first /api/multipliers call (and the
+    first trade on each symbol) is served instantly from the cache.
+    """
+    symbols = list(getattr(Config, "VOLATILITY_INDICES", []) or [])
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(_get_valid_multipliers, symbols))
+    logger.info("Multiplier cache warmed for %d symbols", len(symbols))
+
+
+def _nearest_multiplier(requested, allowed):
+    """Pick the allowed multiplier closest to `requested` (ties -> smaller)."""
+    if not allowed:
+        return requested
+    if requested in allowed:
+        return requested
+    return min(allowed, key=lambda v: (abs(v - requested), v))
+
+
 # Load any previously-recorded trades so history enrichment survives restarts.
 _load_ledger()
 
 # Initialize on startup (needed for gunicorn/production)
 init_services()
+
+# Warm the per-symbol multiplier cache in the background so the dropdown and
+# auto-trades never wait on a slow first lookup. Daemon thread: harmless if
+# the process is torn down mid-warm.
+threading.Thread(target=_warm_multiplier_cache, daemon=True).start()
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -160,6 +239,14 @@ def api_config():
         "default_timeframe": Config.DEFAULT_TIMEFRAME,
         "has_token": bool(Config.DERIV_API_TOKEN),
     })
+
+
+@app.route("/api/multipliers")
+def api_multipliers():
+    """Return the multiplier values Deriv accepts for a given symbol."""
+    symbol = request.args.get("symbol") or Config.DEFAULT_SYMBOL
+    values = _get_valid_multipliers(symbol)
+    return jsonify({"symbol": symbol, "multipliers": values or []})
 
 
 @app.route("/api/live/config", methods=["POST"])
@@ -316,9 +403,9 @@ def scanner():
     symbol = data.get("symbol", Config.DEFAULT_SYMBOL)
     tf_list = data.get("timeframes") or list(Config.TIMEFRAMES.keys())
     try:
-        count = int(data.get("count", 150))
+        count = int(data.get("count", 100))
     except (TypeError, ValueError):
-        count = 150
+        count = 100
 
     valid = [tf for tf in tf_list if tf in Config.TIMEFRAMES]
     if not valid:
@@ -439,11 +526,12 @@ def place_trade():
     data = request.get_json() or {}
     symbol = data.get("symbol", Config.DEFAULT_SYMBOL)
     lot_size = data.get("lot_size", 0.10)
-    direction = data.get("direction", "BUY")  # BUY (CALL) or SELL (PUT)
+    direction = data.get("direction", "BUY")  # BUY (MULTUP) or SELL (MULTDOWN)
     stop_loss = data.get("stop_loss", 0) or 0
     take_profit = data.get("take_profit", 0) or 0
     break_even = bool(data.get("break_even", False))
     trail = bool(data.get("trail", False))
+    multiplier = int(data.get("multiplier", 100) or 100)
 
     if not Config.DERIV_API_TOKEN:
         return jsonify({
@@ -451,12 +539,20 @@ def place_trade():
             "error": "No Deriv API token configured. Set DERIV_API_TOKEN in .env"
         }), 400
 
-    amount = lot_size  # lot size maps directly to stake for volatility indices
-    contract_type = "CALL" if direction == "BUY" else "PUT"
+    amount = lot_size  # lot size maps directly to the multiplier stake
+    contract_type = "MULTUP" if direction == "BUY" else "MULTDOWN"
+
+    # Different underlyings accept different multiplier values (e.g. R_50 wants
+    # 80/200/400/600/800, R_75 wants 50/100/200/300/500). Resolve the requested
+    # one to the nearest valid value for this symbol so auto-trades across the
+    # scanner never fail with ContractBuyValidationError.
+    allowed = _get_valid_multipliers(symbol)
+    multiplier_used = _nearest_multiplier(multiplier, allowed or [])
 
     async def _trade(api):
-        # 1-minute contract gives the SL/TP auto-close monitor time to act.
-        return await api.buy_contract(symbol, amount, contract_type, 1, "m")
+        # Open-ended MULTIPLIER position: no fixed expiry — it stays open until
+        # the SL/TP auto-close monitor acts or the user closes it manually.
+        return await api.buy_multiplier(symbol, amount, direction, multiplier_used)
 
     try:
         result = _deriv_call(_trade, authenticated=True)
@@ -472,6 +568,7 @@ def place_trade():
                 "symbol": symbol,
                 "contract_type": contract_type,
                 "lot_size": lot_size,
+                "multiplier": multiplier_used,
                 "stop_loss": stop_loss,
                 "take_profit": take_profit,
             }
@@ -485,6 +582,7 @@ def place_trade():
                 "transaction_id": result["buy"].get("transaction_id"),
                 "price": result["buy"].get("buy_price"),
                 "balance_after": result["buy"].get("balance_after"),
+                "multiplier": multiplier_used,
             })
         else:
             # Extract a friendly message from the Deriv error envelope, e.g.
@@ -492,6 +590,9 @@ def place_trade():
             details = result.get("details", {}) if isinstance(result, dict) else {}
             err = details.get("error", {}) if isinstance(details, dict) else {}
             message = err.get("message") if isinstance(err, dict) else None
+            code = err.get("code") if isinstance(err, dict) else None
+            logger.warning("Deriv rejected trade (code=%s): %s — symbol=%s lot=%s dir=%s mult=%s",
+                           code, message, symbol, lot_size, direction, multiplier)
             return jsonify({"success": False, "error": message or str(result)}), 400
 
     except Exception as e:
@@ -523,22 +624,75 @@ def sell_contract():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/api/close_all", methods=["POST"])
+def close_all_positions():
+    """Sell/close EVERY open position in one request."""
+    if not Config.DERIV_API_TOKEN:
+        return jsonify({"success": False, "error": "No API token configured"}), 400
+
+    async def _close_all(api):
+        port = await api.get_portfolio()
+        pt = port.get("portfolio", {}) if isinstance(port, dict) else {}
+        contracts = pt.get("contracts", []) if isinstance(pt, dict) else []
+        closed = 0
+        for c in contracts:
+            cid = c.get("contract_id")
+            if not cid:
+                continue
+            try:
+                await api.sell_contract(cid)
+                closed += 1
+            except Exception:
+                continue
+        return closed
+
+    try:
+        closed = _deriv_call(_close_all, authenticated=True)
+        position_monitor.untrack_all()
+        return jsonify({"success": True, "closed": closed})
+    except Exception as e:
+        logger.error(f"Error closing all positions: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/positions")
 def get_positions():
-    """Get current open positions (portfolio) normalized for the UI."""
+    """Get current open positions (portfolio) normalized for the UI, enriched
+    with LIVE unrealized P/L.
+
+    The new-API portfolio response does NOT include a current-profit field, so
+    each open contract's live P/L is fetched via `proposal_open_contract` (the
+    same call the SL/TP auto-close monitor uses successfully).
+    """
     if not Config.DERIV_API_TOKEN:
         return jsonify({"success": False, "error": "No API token configured"}), 400
 
     async def _portfolio(api):
-        return await api.get_portfolio()
+        port = await api.get_portfolio()
+        pt = port.get("portfolio", {}) if isinstance(port, dict) else {}
+        contracts = pt.get("contracts", []) if isinstance(pt, dict) else []
+        for c in contracts:
+            cid = c.get("contract_id")
+            if not cid:
+                continue
+            try:
+                poc = await api._send_request({"proposal_open_contract": 1, "contract_id": int(cid)})
+                poc_data = (poc or {}).get("proposal_open_contract") or {}
+                if isinstance(poc_data, dict):
+                    c["_profit"] = _num(poc_data.get("profit"))
+                    c["_sellable"] = poc_data.get("is_valid_to_sell")
+            except Exception:
+                pass
+        return contracts
 
     try:
-        result = _deriv_call(_portfolio, authenticated=True)
-        pt = result.get("portfolio", {}) if isinstance(result, dict) else {}
-        contracts = pt.get("contracts", []) if isinstance(pt, dict) else []
+        contracts = _deriv_call(_portfolio, authenticated=True)
+        cutoff = session.get("history_cutoff") or 0
         positions = []
         for c in contracts:
             try:
+                if cutoff and (c.get("purchase_time") or 0) < cutoff:
+                    continue
                 buy_price = float(c.get("buy_price", 0))
                 payout = float(c.get("payout", 0))
                 cid = c.get("contract_id")
@@ -552,6 +706,8 @@ def get_positions():
                     "stop_loss": info.get("stop_loss", 0),
                     "take_profit": info.get("take_profit", 0),
                     "payout": payout,
+                    "profit": c.get("_profit"),
+                    "is_valid_to_sell": c.get("_sellable", c.get("is_valid_to_sell")),
                     "purchase_time": c.get("purchase_time"),
                     "expiry_time": c.get("expiry_time"),
                     "shortcode": c.get("shortcode"),
@@ -636,10 +792,13 @@ def get_history():
 
         history = []
         open_ids = set()
+        cutoff = session.get("history_cutoff") or 0
 
         # 1) Live (open) trades first, so open positions appear immediately.
         for c in contracts:
             try:
+                if cutoff and (c.get("purchase_time") or 0) < cutoff:
+                    continue
                 cid = c.get("contract_id")
                 if cid is not None:
                     open_ids.add(cid)
@@ -664,6 +823,8 @@ def get_history():
         # 2) Settled trades from profit_table (skip any still-open duplicates).
         for t in txns:
             try:
+                if cutoff and (t.get("purchase_time") or 0) < cutoff:
+                    continue
                 cid = t.get("contract_id")
                 if cid in open_ids:
                     continue
@@ -702,6 +863,27 @@ def get_history():
     except Exception as e:
         logger.error(f"Error fetching history: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/clear", methods=["POST"])
+def clear_trades():
+    """Clear the in-app trade ledger and start history fresh from now.
+
+    The trade ledger (symbol/lot/SL/TP enrichment) is wiped, and a per-session
+    "history cutoff" timestamp is stored so /api/history and /api/positions only
+    return trades placed AFTER the reset — a true fresh start.
+    """
+    global trade_ledger
+    trade_ledger = {}
+    if os.path.exists(LEDGER_FILE):
+        try:
+            os.remove(LEDGER_FILE)
+        except Exception:
+            pass
+    cutoff = int(time.time())
+    session["history_cutoff"] = cutoff
+    logger.info("Trades cleared; history cutoff set to %s", cutoff)
+    return jsonify({"success": True, "cutoff": cutoff})
 
 
 # ---------------------------------------------------------------------------

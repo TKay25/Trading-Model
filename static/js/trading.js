@@ -22,7 +22,10 @@ class TradingControls {
         this.connectionStatus = document.getElementById('connectionStatus');
         this.accountBalance = document.getElementById('accountBalance');
 
+        this._multCache = {};    // symbol -> valid multiplier values
+        this._multReqSeq = 0;    // guard against out-of-order refresh responses
         this._bindEvents();
+        this.refreshMultiplierOptions(this.currentSymbol);
     }
 
     _bindEvents() {
@@ -32,10 +35,59 @@ class TradingControls {
     }
 
     /**
-     * Update current trading symbol.
+     * Update current trading symbol (and its valid multiplier options).
      */
     setSymbol(symbol) {
         this.currentSymbol = symbol;
+        this.refreshMultiplierOptions(symbol);
+    }
+
+    /**
+     * Rebuild the multiplier dropdown to only show the values Deriv accepts
+     * for `symbol`, preserving the current selection when still valid (else
+     * snapping to the nearest valid value).
+     */
+    async refreshMultiplierOptions(symbol) {
+        const seq = ++this._multReqSeq;
+        const valid = await this._fetchValidMultipliers(symbol);
+        const sel = document.getElementById('tradeMultiplier');
+        if (!sel || !valid || valid.length === 0) return;
+        // Ignore stale responses: if a newer symbol change happened while this
+        // fetch was in flight, another refresh has (or will) take over.
+        if (seq !== this._multReqSeq) return;
+        const current = parseInt(sel.value) || 100;
+        const next = valid.includes(current) ? current : this._nearestMult(current, valid);
+        sel.innerHTML = valid.map(v => `<option value="${v}">${v}×</option>`).join('');
+        sel.value = String(next);
+    }
+
+    /**
+     * Resolve a multiplier value that Deriv accepts for `symbol`: the current
+     * dropdown selection when valid, otherwise the nearest valid one. Auto-trades
+     * rely on this so they never fail on a market with a different multiplier set.
+     */
+    async _resolveMultiplier(symbol) {
+        const selected = parseInt((document.getElementById('tradeMultiplier') || {}).value) || 100;
+        const valid = await this._fetchValidMultipliers(symbol);
+        if (!valid || valid.length === 0) return selected;
+        if (valid.includes(selected)) return selected;
+        return this._nearestMult(selected, valid);
+    }
+
+    async _fetchValidMultipliers(symbol) {
+        if (this._multCache[symbol]) return this._multCache[symbol];
+        try {
+            const r = await fetch(`/api/multipliers?symbol=${encodeURIComponent(symbol)}`);
+            const d = await r.json();
+            this._multCache[symbol] = Array.isArray(d.multipliers) ? d.multipliers : [];
+            return this._multCache[symbol];
+        } catch (_) {
+            return [];
+        }
+    }
+
+    _nearestMult(selected, valid) {
+        return valid.reduce((a, b) => (Math.abs(b - selected) < Math.abs(a - selected) ? b : a));
     }
 
     /**
@@ -90,9 +142,32 @@ class TradingControls {
             return;
         }
 
-        this.apiToken = trimmed;  // '' means "use the .env token"
-        this._showToast('Connecting', 'Connecting to Deriv API...');
+        await this._performConnect(trimmed);  // '' means "use the .env token"
+    }
 
+    /**
+     * Auto-connect on page load using the token in .env (no user interaction).
+     * The market-data stream already connects automatically; this also brings
+     * in the account balance, trades and history without clicking Connect.
+     */
+    async _autoConnect() {
+        if (this.authenticated) return;
+        let hasEnvToken = false;
+        try {
+            const res = await fetch('/api/config');
+            const cfg = await res.json();
+            hasEnvToken = !!cfg.has_token;
+        } catch (_) {}
+        if (!hasEnvToken) return;
+        await this._performConnect('');
+    }
+
+    /**
+     * Run the actual /api/connect flow with a given token and update the UI.
+     */
+    async _performConnect(token) {
+        this.apiToken = token || '';
+        this._showToast('Connecting', 'Connecting to Deriv API...');
         try {
             const response = await fetch('/api/connect', {
                 method: 'POST',
@@ -260,9 +335,19 @@ class TradingControls {
             this._showTradeStatus('Enter a valid lot size', 'warning');
             return;
         }
+        // Deriv enforces a minimum stake (~$0.35); the API surfaces the exact
+        // minimum if a multiplier is entered too small — we show that error.
+        if (lotSize < 0.35) {
+            this._showTradeStatus(`Lot size too small — Deriv minimum stake is $0.35 (you entered $${lotSize.toFixed(3)}). Increase the lot size.`, 'warning');
+            return;
+        }
         if (window.app) window.app._lastDirection = direction;
 
-        this._showTradeStatus(`Opening ${direction} position...`, 'info');
+        // Resolve a multiplier Deriv accepts for THIS symbol (auto-trades can
+        // target markets whose valid multiplier set excludes the current pick).
+        const multiplier = await this._resolveMultiplier(this.currentSymbol);
+
+        this._showTradeStatus(`Opening ${direction} ${multiplier}× position...`, 'info');
         this.btnBuy.disabled = true;
         this.btnSell.disabled = true;
 
@@ -274,6 +359,7 @@ class TradingControls {
                     symbol: this.currentSymbol,
                     lot_size: lotSize,
                     direction: direction,
+                    multiplier: multiplier,
                     stop_loss: parseFloat(this.stopLossInput.value) || 0,
                     take_profit: parseFloat(this.takeProfitInput.value) || 0,
                     break_even: !!(document.getElementById('breakEvenToggle') || {}).checked,
@@ -284,8 +370,9 @@ class TradingControls {
             const data = await response.json();
 
             if (data.success) {
+                const used = data.multiplier || multiplier;
                 this._showTradeStatus(
-                    `${direction} position opened`,
+                    `${direction} ${used}× position opened — open until SL/TP or close`,
                     'success'
                 );
                 // Refresh positions AND history so the live trade shows
@@ -306,10 +393,10 @@ class TradingControls {
      * Auto-trade an all-aligned signal from the signal engine.
      * Paper mode only simulates; otherwise it places a real (demo/live) trade.
      */
-    async autoTrade(action, strength, paper = true) {
+    async autoTrade(action, strength, paper = true, symbol = null, timeframe = null) {
         const dir = action === 'BUY' ? 'BUY' : 'SELL';
-        const sym = window.app ? window.app.symbol : this.currentSymbol;
-        const tf = window.app ? window.app.timeframe : '';
+        const sym = symbol || (window.app ? window.app.symbol : this.currentSymbol);
+        const tf = timeframe || (window.app ? window.app.timeframe : '');
         if (paper) {
             this._showTradeStatus(`PAPER ${dir} @ ${sym} ${tf} (strength ${strength}%)`, 'success');
             this._showToast(`Paper ${dir}`, `${sym} ${tf} — all-aligned signal, strength ${strength}%. No real trade placed.`);
@@ -320,6 +407,9 @@ class TradingControls {
             return;
         }
         this.currentSymbol = sym;
+        // Note: we intentionally do NOT refresh the multiplier dropdown here —
+        // it should keep showing the user's chart symbol. _placeTrade resolves a
+        // valid multiplier for the auto-trade target via _resolveMultiplier().
         if (window.app) window.app._lastDirection = dir;
         await this._placeTrade(dir);
     }
@@ -354,3 +444,6 @@ class TradingControls {
 
 // Global instance
 const tradingControls = new TradingControls();
+
+// Auto-connect to the account using the token in .env (no click needed).
+document.addEventListener('DOMContentLoaded', () => tradingControls._autoConnect());
