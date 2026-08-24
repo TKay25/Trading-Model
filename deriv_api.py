@@ -16,6 +16,11 @@ import urllib.error
 import websockets
 import logging
 
+# Use the explicit asyncio client directly (avoids the deprecated top-level
+# `websockets.connect` alias, whose lazy-import path can stall a worker at
+# startup and showed up in a Render WORKER TIMEOUT traceback).
+from websockets.asyncio.client import connect as _ws_connect
+
 logger = logging.getLogger(__name__)
 
 PUBLIC_WS_URL = "wss://api.derivws.com/trading/v1/options/ws/public"
@@ -132,7 +137,7 @@ class DerivAPI:
                 ws_url = PUBLIC_WS_URL
 
             self._ws = await asyncio.wait_for(
-                websockets.connect(ws_url, ping_interval=20, ping_timeout=20),
+                _ws_connect(ws_url, ping_interval=20, ping_timeout=20),
                 timeout=timeout
             )
             logger.info(

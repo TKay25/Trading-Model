@@ -6,7 +6,13 @@ services:
     plan: free
     region: oregon
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --workers 2 --threads 8 --worker-class gthread --timeout 120 --graceful-timeout 30 --keep-alive 5 --bind 0.0.0.0:$PORT
+    # Single gthread worker: the app runs background singletons (live stream,
+    # balance stream, SL/TP position monitor) — multiple workers would duplicate
+    # them (2 live streams, 2 position monitors racing to close the same trade).
+    # gthread threads handle the long-lived SSE streams + concurrent API calls
+    # without a sync worker ever being blocked. High --timeout lets the 25s
+    # _deriv_call wait_for return a clean 500 instead of tripping a worker kill.
+    startCommand: gunicorn app:app --workers 1 --threads 16 --worker-class gthread --timeout 120 --graceful-timeout 30 --keep-alive 5 --bind 0.0.0.0:$PORT
     envVars:
       - key: FLASK_DEBUG
         value: "0"
