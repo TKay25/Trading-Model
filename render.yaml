@@ -5,6 +5,11 @@ services:
     repo: https://github.com/yourusername/your-repo-name
     plan: free
     region: oregon
+    # Pin to Python 3.12: Python 3.14 removed the stdlib "idna" codec that older
+    # Werkzeug relied on (LookupError: unknown encoding: idna -> 500 on every
+    # request). 3.12 + Werkzeug 3.1.8 is the verified-stable combo. If deploying
+    # from the Render DASHBOARD (not a blueprint), set the same version there.
+    pythonVersion: "3.12.7"
     buildCommand: pip install -r requirements.txt
     # Single gthread worker: the app runs background singletons (live stream,
     # balance stream, SL/TP position monitor) — multiple workers would duplicate

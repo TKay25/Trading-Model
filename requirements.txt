@@ -1,5 +1,9 @@
-Flask==3.1.0
+Flask==3.1.3
 Flask-CORS==5.0.1
+# Werkzeug must be >= 3.1.3: older versions call str.encode("idna"), but
+# Python 3.14 REMOVED the stdlib "idna" codec -> every request 500s with
+# "LookupError: unknown encoding: idna" (crash seen on Render, 2026-08-24).
+Werkzeug==3.1.8
 websockets==16.1.1
 numpy==2.1.3
 python-dotenv==1.0.1
