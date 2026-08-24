@@ -27,6 +27,7 @@ class TradingDashboardApp {
         this._autoTradeNotified = {};    // `auto:${symbol}:${tf}:${action}` -> last trade ts
         this._autoTradeTimeframes = ['5m', '15m', '30m'];   // ONLY auto-trade these timeframes
         this._scannerSignals = [];
+        this._oneMin = {};               // symbol -> 1m candles (candle-confirmation for signals)
         this._tradeRisk = null;          // VaR/ES from ACTUAL trade results
         this._audioCtx = null;
 
@@ -257,6 +258,8 @@ class TradingDashboardApp {
         results.forEach(r => {
             if (!r.candles || !r.candles.length) return;
             const candles = r.candles.map(c => ({ open: parseFloat(c.open), high: parseFloat(c.high), low: parseFloat(c.low), close: parseFloat(c.close), epoch: c.epoch }));
+            // Keep fresh 1m candles per symbol — they confirm auto-trade signals.
+            if (r.timeframe === '1m') this._oneMin[r.symbol] = candles;
             const tdi = this.tdi.calculate(candles);
             if (!tdi) return;
             const patterns = this.patternRecognizer.detect(candles);
@@ -437,10 +440,13 @@ class TradingDashboardApp {
      * (TDI/Bollinger/RSI bounce agreed with an M/W, H&S or candlestick
      * reversal pattern).
      */
-    _maybeAutoTrade(signal, tdi, candles) {
+    async _maybeAutoTrade(signal, tdi, candles) {
         const action = this._reversalTradeAction(signal);
         if (!action) return;
-        const strength = Math.round((this.signalEngine._strength(action, tdi, candles) || 0) * 100);
+        // The candle confirmation (momentum/freshness) is checked on the 1m
+        // candles; the signal itself comes from the current (5m/15m/30m) chart.
+        const cc = await this._oneMinCandles(this.symbol);
+        const strength = Math.round((this.signalEngine._strength(action, tdi, candles, cc) || 0) * 100);
         // Pass the signal's suggested $ SL/TP so the auto-trade is protected.
         this._autoTradeSignal(this.symbol, this.timeframe, action, strength, {
             stopLoss: signal.stop_loss,
@@ -457,13 +463,43 @@ class TradingDashboardApp {
         (this._scannerSignals || []).forEach(a => {
             const action = this._reversalTradeAction(a.signal);
             if (!action) return;
-            const strength = Math.round((this.signalEngine._strength(action, a.tdi, a.candles) || 0) * 100);
+            // Signal is on 5m/15m/30m; candle confirmation is on the symbol's 1m.
+            const cc = (this._oneMin && this._oneMin[a.symbol]) || null;
+            const strength = Math.round((this.signalEngine._strength(action, a.tdi, a.candles, cc) || 0) * 100);
             // Apply the signal's suggested $ SL/TP for this symbol/timeframe.
             this._autoTradeSignal(a.symbol, a.timeframe, action, strength, {
                 stopLoss: a.signal.stop_loss,
                 takeProfit: a.signal.take_profit,
             });
         });
+    }
+
+    /**
+     * Return fresh 1m candles for `symbol` (scanner cache, else a lazy fetch).
+     * These are used to confirm auto-trade signals with candle momentum.
+     */
+    async _oneMinCandles(symbol) {
+        if (this._oneMin && this._oneMin[symbol] && this._oneMin[symbol].length) {
+            return this._oneMin[symbol];
+        }
+        try {
+            const resp = await fetch('/api/candles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbol, timeframe: '1m', count: 60 }),
+            });
+            const d = await resp.json();
+            if (d.success && Array.isArray(d.candles)) {
+                const mapped = d.candles.map(c => ({
+                    open: parseFloat(c.open), high: parseFloat(c.high),
+                    low: parseFloat(c.low), close: parseFloat(c.close), epoch: c.epoch,
+                }));
+                if (!this._oneMin) this._oneMin = {};
+                this._oneMin[symbol] = mapped;
+                return mapped;
+            }
+        } catch (_) { /* ignore */ }
+        return null;
     }
 
     /**
@@ -1245,10 +1281,14 @@ class TradingDashboardApp {
         // NOTE: the VaR/ES tiles are driven by TRADE results (see _updatePerformance).
 
         // Combined signal: TDI indicator + chart patterns (M/W + formations).
+        // Candle confirmation (strength %) uses the symbol's 1m candles, even
+        // though the signal itself comes from the current (5m/15m/30m) chart.
         const stake = parseFloat((document.getElementById('tradeLotSize') || {}).value) || 1;
+        const confirmCandles = await this._oneMinCandles(this.symbol);
         const signal = this.signalEngine.generate(tdiValues, patterns, candles, {
             stake: stake,
             payoutRatio: this._payoutRatio,
+            confirmCandles: confirmCandles,
         });
         this._displaySignal(signal, { tdi: tdiValues, patterns });
 

@@ -758,6 +758,9 @@ class SignalEngine {
             overall.action === 'BUY' || overall.action === 'SELL';
         // Strength follows whichever signal is actually driving the trade.
         const strengthAction = (reversal === 'BUY' || reversal === 'SELL') ? reversal : overall.action;
+        // Candle confirmation may come from 1m candles (opts.confirmCandles)
+        // even though the signal comes from the current timeframe's TDI/patterns.
+        const confirmCandles = opts.confirmCandles || null;
 
         return {
             action: overall.action,
@@ -770,7 +773,7 @@ class SignalEngine {
             reason: this._reason(tdiAction, patternAction, candleAction, patterns, n),
             stop_loss: directional ? Math.round(suggestedSl * 100) / 100 : null,
             take_profit: directional ? Math.round(suggestedTp * 100) / 100 : null,
-            strength: this._strength(strengthAction, tdi, candles),
+            strength: this._strength(strengthAction, tdi, candles, confirmCandles),
         };
     }
 
@@ -780,12 +783,13 @@ class SignalEngine {
      * Decays as recent candles move against the signal and drops to 0 once the
      * TDI green/red alignment flips against it. HOLD always = 0.
      */
-    _strength(action, tdi, candles) {
+    _strength(action, tdi, candles, confirmCandles) {
         if (action !== 'BUY' && action !== 'SELL') return 0;
         const n = candles ? candles.length : 0;
         if (n < 5) return 0;
 
         // Hard gate: if the TDI green/red lines flipped against the signal, it's dead.
+        // The gate uses the SIGNAL timeframe's TDI (indexed by its own candles).
         let tdiOk = true;
         if (tdi && Array.isArray(tdi.fullSignal) && Array.isArray(tdi.fullRsiSmoothed)) {
             const g = tdi.fullSignal[n - 1];
@@ -794,11 +798,17 @@ class SignalEngine {
         }
         if (!tdiOk) return 0;
 
+        // Candle confirmation is checked on the 1m candles when provided
+        // (confirmCandles), falling back to the signal-timeframe candles.
+        const cc = (confirmCandles && confirmCandles.length) ? confirmCandles : candles;
+        const m = cc.length;
+        if (m < 5) return 0;
+
         // Recent momentum: how many of the last 6 candles agree with the signal.
         let agree = 0;
         const W = 6;
         for (let k = 1; k <= W; k++) {
-            const c = candles[n - k];
+            const c = cc[m - k];
             if (!c) continue;
             const bull = parseFloat(c.close) > parseFloat(c.open);
             if ((action === 'BUY' && bull) || (action === 'SELL' && !bull)) agree++;
@@ -807,8 +817,8 @@ class SignalEngine {
 
         // Freshness: consecutive recent bars still supporting the signal.
         let consecutive = 0;
-        for (let k = 1; k <= n; k++) {
-            const c = candles[n - k];
+        for (let k = 1; k <= m; k++) {
+            const c = cc[m - k];
             if (!c) break;
             const bull = parseFloat(c.close) > parseFloat(c.open);
             const agrees = (action === 'BUY' && bull) || (action === 'SELL' && !bull);
