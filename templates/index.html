@@ -224,10 +224,11 @@
                         </label>
                         <label class="auto-min">Min <span id="autoStrengthVal">70</span>%</label>
                         <label class="switch-label auto-paper"><input type="checkbox" id="autoTradePaper"> <span>Paper</span></label>
+                        <label class="switch-label auto-paper" title="Close a position when TDI + M/W + candlestick signals flip against it"><input type="checkbox" id="autoExitReversal" checked> <span>Exit on rev.</span></label>
                         <span id="autoModeBadge" class="auto-mode-badge live">LIVE</span>
                         <input type="range" id="autoTradeStrength" min="10" max="100" value="70" step="5" class="auto-range">
                     </div>
-                    <p class="sl-tp-hint auto-hint">Auto-trades 5m/15m/30m reversal signals ≥70% · One position per symbol (no hedging) · Paper = simulated, no real trade.</p>
+                    <p class="sl-tp-hint auto-hint">Server-side auto-trading: 5m/15m/30m reversal signals ≥70% · One position per symbol · Exits when a reversal opposes the trade · Works with the page closed.</p>
                 </div>
                 <div id="tradeStatus" class="trade-status d-none"></div>
             </div>

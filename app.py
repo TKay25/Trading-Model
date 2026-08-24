@@ -15,6 +15,7 @@ from position_monitor import PositionMonitor
 from trading_service import (
     TradingService, Candle, PatternRecognizer, TDICalculator
 )
+from auto_trader import AutoTrader
 
 # ---------------------------------------------------------------------------
 # idna codec shim (Render crash fix, 2026-08-24)
@@ -74,6 +75,7 @@ live_stream: LiveDerivStream = None
 balance_stream: LiveBalanceStream = None
 position_monitor: PositionMonitor = None
 _shared_conn: SharedDerivConnection = None
+auto_trader: AutoTrader = None
 
 # In-app ledger of trades placed through this app (contract_id -> metadata).
 # Deriv's profit_table/portfolio omit symbol, lot size and SL/TP, so we keep
@@ -111,6 +113,27 @@ def _save_ledger():
         logger.warning(f"Failed to save trade ledger: {e}")
 
 
+def _record_trade_ledger(contract_id, symbol, contract_type, lot_size, multiplier,
+                         stop_loss, take_profit):
+    """Record a trade in the in-app ledger (history/positions enrichment).
+
+    Deriv's profit_table/portfolio omit symbol, lot size, multiplier and SL/TP,
+    so we keep them here. Used by both /api/trade and the server-side AutoTrader.
+    """
+    trade_ledger[int(contract_id)] = {
+        "symbol": symbol,
+        "contract_type": contract_type,
+        "lot_size": lot_size,
+        "multiplier": multiplier,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+    }
+    if len(trade_ledger) > MAX_LEDGER:
+        for _cid in list(trade_ledger)[: len(trade_ledger) - MAX_LEDGER]:
+            trade_ledger.pop(_cid, None)
+    _save_ledger()
+
+
 def _num(v):
     """Best-effort float conversion; None for missing/non-numeric."""
     try:
@@ -126,7 +149,7 @@ def init_services():
     though init_services() may be invoked multiple times (module import,
     create_app(), and the __main__ block).
     """
-    global trading_service, live_stream, balance_stream, position_monitor
+    global trading_service, live_stream, balance_stream, position_monitor, auto_trader
     trading_service = TradingService(symbol=Config.DEFAULT_SYMBOL)
     if live_stream is None:
         live_stream = LiveDerivStream()
@@ -142,6 +165,17 @@ def init_services():
         position_monitor = PositionMonitor()
         position_monitor.start()
     _get_shared_conn()  # start the persistent connection thread
+    if auto_trader is None:
+        auto_trader = AutoTrader(
+            deriv_call=_deriv_call,
+            resolve_multiplier=lambda sym, req: _nearest_multiplier(
+                req, _get_valid_multipliers(sym) or []),
+            record_trade=_record_trade_ledger,
+            position_monitor=position_monitor,
+            symbols=Config.VOLATILITY_INDICES.keys(),
+            timeframes=Config.TIMEFRAMES,
+        )
+        auto_trader.start()
 
 
 def _get_shared_conn():
@@ -607,18 +641,8 @@ def place_trade():
                                        break_even=break_even, trail=trail)
             # Record in the in-app ledger so history/positions can show the
             # instrument, lot size and SL/TP (Deriv omits these fields).
-            trade_ledger[contract_id] = {
-                "symbol": symbol,
-                "contract_type": contract_type,
-                "lot_size": lot_size,
-                "multiplier": multiplier_used,
-                "stop_loss": stop_loss,
-                "take_profit": take_profit,
-            }
-            if len(trade_ledger) > MAX_LEDGER:
-                for _cid in list(trade_ledger)[: len(trade_ledger) - MAX_LEDGER]:
-                    trade_ledger.pop(_cid, None)
-            _save_ledger()
+            _record_trade_ledger(contract_id, symbol, contract_type, lot_size,
+                                 multiplier_used, stop_loss, take_profit)
             return jsonify({
                 "success": True,
                 "contract_id": contract_id,
@@ -696,6 +720,62 @@ def close_all_positions():
     except Exception as e:
         logger.error(f"Error closing all positions: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/close_symbol", methods=["POST"])
+def close_symbol_positions():
+    """Sell/close every open position for one symbol. Used by the technical
+    reversal exit: when TDI + M/W + candlestick signals flip AGAINST the open
+    trade, the frontend closes that symbol's positions even before SL/TP."""
+    data = request.get_json() or {}
+    symbol = (data.get("symbol") or "").strip()
+    if not symbol:
+        return jsonify({"success": False, "error": "symbol required"}), 400
+    if not Config.DERIV_API_TOKEN:
+        return jsonify({"success": False, "error": "No API token configured"}), 400
+
+    async def _close_sym(api):
+        port = await api.get_portfolio()
+        pt = port.get("portfolio", {}) if isinstance(port, dict) else {}
+        contracts = pt.get("contracts", []) if isinstance(pt, dict) else []
+        closed = []
+        for c in contracts:
+            cid = c.get("contract_id")
+            if not cid or (c.get("underlying_symbol") or "") != symbol:
+                continue
+            try:
+                await api.sell_contract(cid)
+                closed.append(cid)
+            except Exception:
+                continue
+        return closed
+
+    try:
+        closed = _deriv_call(_close_sym, authenticated=True)
+        for cid in closed:
+            position_monitor.untrack(cid)
+        return jsonify({"success": True, "closed": len(closed), "contract_ids": closed})
+    except Exception as e:
+        logger.error(f"Error closing symbol {symbol}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/auto/config", methods=["POST"])
+def auto_config():
+    """Update the SERVER-side auto-trader config (pushed from the dashboard)."""
+    if auto_trader is None:
+        return jsonify({"success": False, "error": "auto-trader not initialized"}), 500
+    data = request.get_json() or {}
+    cfg = auto_trader.update_config(**data)
+    return jsonify({"success": True, "config": cfg})
+
+
+@app.route("/api/auto/status")
+def auto_status():
+    """Server-side auto-trader status (config + last cycle activity)."""
+    if auto_trader is None:
+        return jsonify({"success": False, "error": "auto-trader not initialized"}), 500
+    return jsonify({"success": True, **auto_trader.get_status()})
 
 
 @app.route("/api/positions")

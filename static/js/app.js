@@ -75,6 +75,7 @@ class TradingDashboardApp {
         this.autoStrengthVal = document.getElementById('autoStrengthVal');
         this.autoTradePaper = document.getElementById('autoTradePaper');
         this.autoModeBadge = document.getElementById('autoModeBadge');
+        this.autoExitReversal = document.getElementById('autoExitReversal');
 
         // Performance / analytics
         this.equityCanvas = document.getElementById('equityCanvas');
@@ -85,6 +86,10 @@ class TradingDashboardApp {
 
         this._bindEvents();
         this._loadInitialData();
+        // Server-side auto-trader: sync config now and poll its activity.
+        this._syncAutoConfig();
+        this._lastAutoActivity = undefined;
+        this._autoStatusTimer = setInterval(() => this._pollAutoStatus(), 10000);
     }
 
     _bindEvents() {
@@ -157,8 +162,15 @@ class TradingDashboardApp {
         }
 
         // Auto-trade LIVE vs PAPER indicator.
-        if (this.autoTradePaper) this.autoTradePaper.addEventListener('change', () => this._updateAutoMode());
+        if (this.autoTradePaper) this.autoTradePaper.addEventListener('change', () => { this._updateAutoMode(); this._syncAutoConfig(); });
         this._updateAutoMode();
+
+        // Server-side auto-trader: toggles / min-strength / lot push config to the backend.
+        if (this.autoTradeToggle) this.autoTradeToggle.addEventListener('change', () => this._syncAutoConfig());
+        if (this.autoExitReversal) this.autoExitReversal.addEventListener('change', () => this._syncAutoConfig());
+        if (this.autoTradeStrength) this.autoTradeStrength.addEventListener('change', () => this._syncAutoConfig());
+        const lotEl = document.getElementById('tradeLotSize');
+        if (lotEl) lotEl.addEventListener('change', () => this._syncAutoConfig());
 
         // Backtest + CSV export + reset.
         if (this.runBacktest) this.runBacktest.addEventListener('click', () => this._runBacktest());
@@ -174,6 +186,56 @@ class TradingDashboardApp {
         }
         const box = document.querySelector('.auto-trade-box');
         if (box) box.classList.toggle('live', !paper);
+    }
+
+    /**
+     * Push the current UI auto-trade settings to the SERVER-side AutoTrader.
+     * The server does the actual opening/closing (works with the page closed).
+     */
+    async _syncAutoConfig() {
+        const stake = parseFloat((document.getElementById('tradeLotSize') || {}).value) || 1;
+        const body = {
+            enabled: !!(this.autoTradeToggle && this.autoTradeToggle.checked),
+            min_strength: parseFloat(this.autoTradeStrength && this.autoTradeStrength.value) || 70,
+            paper: !!(this.autoTradePaper && this.autoTradePaper.checked),
+            exit_on_reversal: !!(this.autoExitReversal && this.autoExitReversal.checked),
+            stake: stake,
+        };
+        try {
+            await fetch('/api/auto/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+        } catch (_) { /* ignore */ }
+    }
+
+    /**
+     * Poll the server-side AutoTrader: surface its activity as toasts and
+     * reflect its persisted config back onto the toggles.
+     */
+    async _pollAutoStatus() {
+        try {
+            const resp = await fetch('/api/auto/status');
+            const data = await resp.json();
+            if (!data.success) return;
+            if (data.config) {
+                if (this.autoTradeToggle) this.autoTradeToggle.checked = !!data.config.enabled;
+                if (this.autoExitReversal) this.autoExitReversal.checked = !!data.config.exit_on_reversal;
+                if (this.autoTradePaper) this.autoTradePaper.checked = !!data.config.paper;
+                this._updateAutoMode();
+            }
+            const at = data.at || 0;
+            if (this._lastAutoActivity === undefined) { this._lastAutoActivity = at; return; }
+            if (at <= this._lastAutoActivity) return;
+            this._lastAutoActivity = at;
+            if ((data.opened && data.opened.length) || (data.closed && data.closed.length)) {
+                const parts = [];
+                if (data.opened && data.opened.length) parts.push('Opened: ' + data.opened.join(', '));
+                if (data.closed && data.closed.length) parts.push('Closed: ' + data.closed.join(', '));
+                this._notify('Auto-Trader (server)', parts.join(' · '));
+            }
+        } catch (_) { /* ignore */ }
     }
 
     /**
@@ -349,9 +411,9 @@ class TradingDashboardApp {
         const card = document.getElementById('scannerCard');
         if (card) card.classList.toggle('has-signal', marketCount > 0);
 
-        // Auto-trade any strong all-aligned signal across ALL scanned markets.
+        // Signals are for the DISPLAY only — the SERVER-side AutoTrader now
+        // opens/closes trades on these, so it works even with the page closed.
         this._scannerSignals = analyzed;
-        this._maybeAutoTradeScanner();
     }
 
     /**
@@ -473,6 +535,58 @@ class TradingDashboardApp {
                 takeProfit: a.signal.take_profit,
             });
         });
+    }
+
+    /**
+     * Technical exit: close any open position when a reversal signal (TDI +
+     * M/W + candlestick confluence — the SAME engine that opens trades) forms
+     * in the OPPOSITE direction on the auto-trade timeframes (5m/15m/30m).
+     * This exits on technicals even before SL/TP are hit. 1m candles confirm
+     * the reversal strength, matching how entries are decided.
+     */
+    async _checkTechnicalExit() {
+        if (!this.autoExitReversal || !this.autoExitReversal.checked) return;
+        if (!this.autoTradeToggle || !this.autoTradeToggle.checked) return;
+        const positions = this._openPositions || [];
+        if (!positions.length) return;
+        const minStr = parseFloat((this.autoTradeStrength && this.autoTradeStrength.value) || 0) || 0;
+        const now = Date.now();
+        for (const p of positions) {
+            const sym = p.symbol;
+            if (!sym) continue;
+            const dir = /DOWN|PUT|SELL/i.test(p.contract_type || '') ? 'SELL' : 'BUY';
+            const exitKey = `exit:${sym}`;
+            if ((this._autoTradeNotified[exitKey] || 0) > now - 90000) continue;
+            let hit = null;
+            for (const a of (this._scannerSignals || [])) {
+                if (a.symbol !== sym || !this._autoTradeTimeframes.includes(a.timeframe)) continue;
+                const rev = a.signal && a.signal.reversal;
+                if (rev !== 'BUY' && rev !== 'SELL') continue;
+                const cc = (this._oneMin && this._oneMin[sym]) || null;
+                const str = Math.round((this.signalEngine._strength(rev, a.tdi, a.candles, cc) || 0) * 100);
+                if (str < minStr) continue;
+                if ((dir === 'BUY' && rev === 'SELL') || (dir === 'SELL' && rev === 'BUY')) {
+                    hit = { tf: a.timeframe, rev, str };
+                    break;
+                }
+            }
+            if (!hit) continue;
+            this._autoTradeNotified[exitKey] = now;
+            try {
+                const resp = await fetch('/api/close_symbol', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol: sym }),
+                });
+                const data = await resp.json();
+                if (data.success && data.closed) {
+                    this._notify('Reversal Exit',
+                        `Closed ${data.closed} ${sym} position(s) — ${hit.rev} reversal ${hit.str}% on ${hit.tf}`);
+                    this._loadPositions();
+                    this._loadHistory();
+                }
+            } catch (_) { /* ignore */ }
+        }
     }
 
     /**
@@ -1314,8 +1428,8 @@ class TradingDashboardApp {
         // Draw M (double-top) / W (double-bottom) shapes on the price chart.
         this.chart.drawMWPatterns(patterns);
 
-        // Auto-trade if TDI + any one other signal align (if enabled).
-        this._maybeAutoTrade(signal, tdiValues, candles);
+        // Trades are opened/closed by the SERVER-side AutoTrader (not the page),
+        // so it keeps working even when the dashboard is closed.
 
         // Refresh the $ SL/TP -> market points translation.
         this._updateSlTpTranslation();
