@@ -17,9 +17,14 @@ import websockets
 import logging
 
 # Use the explicit asyncio client directly (avoids the deprecated top-level
-# `websockets.connect` alias, whose lazy-import path can stall a worker at
-# startup and showed up in a Render WORKER TIMEOUT traceback).
-from websockets.asyncio.client import connect as _ws_connect
+# `websockets.connect` alias, whose lazy-import path caused a circular-import
+# failure on Render). Prefer the modern module path, falling back to the
+# top-level alias only if the installed websockets version lacks it.
+try:
+    from websockets.asyncio.client import connect as _ws_connect
+except Exception:  # pragma: no cover - older websockets layouts
+    import websockets as _websockets
+    _ws_connect = _websockets.connect
 
 logger = logging.getLogger(__name__)
 
