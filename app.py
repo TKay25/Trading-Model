@@ -100,7 +100,7 @@ def init_services():
         position_monitor.start()
 
 
-def _deriv_call(coro_factory, token=None, authenticated=False, timeout=25):
+def _deriv_call(coro_factory, token=None, authenticated=False, timeout=45):
     """Open a fresh Deriv WebSocket connection, run coro_factory(api), and clean up.
 
     Each request gets its own event loop and connection so that a slow or
@@ -186,8 +186,10 @@ def _warm_multiplier_cache():
     Runs once per process on startup so the first /api/multipliers call (and the
     first trade on each symbol) is served instantly from the cache.
     """
+    # Keep the startup burst small (2 at a time) — Deriv throttles rapid
+    # reconnects, and Render's datacenter connects are slower than local ones.
     symbols = list(getattr(Config, "VOLATILITY_INDICES", []) or [])
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         list(pool.map(_get_valid_multipliers, symbols))
     logger.info("Multiplier cache warmed for %d symbols", len(symbols))
 

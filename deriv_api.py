@@ -121,7 +121,7 @@ class DerivAPI:
         account_id = self._pick_account_id(accounts)
         return await self._get_otp_ws_url(account_id)
 
-    async def connect(self, timeout: float = 20.0, authenticated: bool = False):
+    async def connect(self, timeout: float = 45.0, authenticated: bool = False):
         """Establish a WebSocket connection to Deriv.
 
         authenticated=False -> public endpoint (market data, no token required).
