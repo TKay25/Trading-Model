@@ -746,24 +746,31 @@ class SignalEngine {
         const candleAction = this._patternAction(patterns, n, { mw: false }); // candlestick formations only
         const overall = this._combine(tdiAction, patternAction, candleAction);
 
+        // REVERSAL-only verdict (TDI/Bollinger/RSI bounce + M/W/H&S/candle).
+        const reversal = this._reversalSignal(tdi, patterns, candles);
+
         // Suggested $ SL/TP for MULTIPLIER positions, scaled to the lot size
         // (stake): stop-loss at -50% of the stake, take-profit at +100% (1:2).
         const stake = (opts.stake && opts.stake > 0) ? opts.stake : 1;
         const suggestedSl = stake * 0.5;
         const suggestedTp = stake * 1.0;
-        const isDirectional = overall.action === 'BUY' || overall.action === 'SELL';
+        const directional = reversal === 'BUY' || reversal === 'SELL' ||
+            overall.action === 'BUY' || overall.action === 'SELL';
+        // Strength follows whichever signal is actually driving the trade.
+        const strengthAction = (reversal === 'BUY' || reversal === 'SELL') ? reversal : overall.action;
 
         return {
             action: overall.action,
+            reversal: reversal,
             tdiAction: tdiAction,
             patternAction: patternAction,
             candleAction: candleAction,
             confidence: overall.confidence,
             conflict: !!overall.conflict,
             reason: this._reason(tdiAction, patternAction, candleAction, patterns, n),
-            stop_loss: isDirectional ? Math.round(suggestedSl * 100) / 100 : null,
-            take_profit: isDirectional ? Math.round(suggestedTp * 100) / 100 : null,
-            strength: this._strength(overall.action, tdi, candles),
+            stop_loss: directional ? Math.round(suggestedSl * 100) / 100 : null,
+            take_profit: directional ? Math.round(suggestedTp * 100) / 100 : null,
+            strength: this._strength(strengthAction, tdi, candles),
         };
     }
 
@@ -874,6 +881,96 @@ class SignalEngine {
         if (trendBuy && !flat && g > last(red) && g > 50) return 'BUY';
         if (trendSell && !flat && g < last(red) && g < 50) return 'SELL';
 
+        return 'NEUTRAL';
+    }
+
+    /**
+     * REVERSAL detector #1 — TDI + Bollinger bands + RSI bounce.
+     *
+     * A reversal is confirmed when RSI has been pushed beyond one of the blue
+     * Bollinger bands (Bollinger(RSI,34,1.619)) and has now reclaimed it,
+     * ideally on a green/red flip:
+     *   - Buy : RSI was at/below the LOWER band (or <30), now back above it.
+     *   - Sell: RSI was at/above the UPPER band (or >70), now back below it.
+     */
+    _tdiReversal(tdi) {
+        if (!tdi || !Array.isArray(tdi.fullRsi) || tdi.fullRsi.length < 40) return 'NEUTRAL';
+        const n = tdi.fullRsi.length;
+        const last = (a, k = 0) => a[Math.max(0, n - 1 - k)];
+
+        const rsi = tdi.fullRsi;
+        const green = tdi.fullSignal;
+        const red = tdi.fullRsiSmoothed;
+        const up = tdi.fullUpperBand;
+        const lo = tdi.fullLowerBand;
+
+        // RSI recently beyond a band (the "extreme" it reverses from).
+        let wasBelow = false, wasAbove = false;
+        for (let k = 1; k <= 6; k++) {
+            if (last(rsi, k) < last(lo, k) || last(rsi, k) < 30) wasBelow = true;
+            if (last(rsi, k) > last(up, k) || last(rsi, k) > 70) wasAbove = true;
+        }
+        const rsiNow = last(rsi);
+        const reclaimedLow = rsiNow > last(lo);   // back inside/above the lower band
+        const reclaimedHigh = rsiNow < last(up);  // back inside/below the upper band
+
+        // Green/Red flip in the last few bars (TDI momentum turn).
+        let buyFlip = false, sellFlip = false;
+        for (let k = 1; k <= 3; k++) {
+            const gp = last(green, k), rp = last(red, k);
+            const gc = last(green, k - 1), rc = last(red, k - 1);
+            if (gc > rc && gp <= rp) buyFlip = true;
+            if (gc < rc && gp >= rp) sellFlip = true;
+        }
+
+        if (wasBelow && reclaimedLow && (buyFlip || rsiNow >= 45)) return 'BUY';
+        if (wasAbove && reclaimedHigh && (sellFlip || rsiNow <= 55)) return 'SELL';
+        return 'NEUTRAL';
+    }
+
+    /**
+     * REVERSAL detector #2 — reversal chart patterns only (M/W, head &
+     * shoulders, and candlestick reversals). Continuation/momentum patterns
+     * (marubozu, three soldiers/crows, flags/pennants) are excluded.
+     */
+    _reversalPatterns(patterns, candleCount) {
+        const w = {
+            // bullish reversal patterns
+            hammer: 1, inverted_hammer: 1, dragonfly_doji: 1,
+            bullish_engulfing: 2, bullish_harami: 1, piercing_line: 1,
+            tweezer_bottom: 1, morning_star: 2,
+            double_bottom: 2, inverted_head_shoulders: 2,
+            // bearish reversal patterns
+            hanging_man: 1, shooting_star: 1, gravestone_doji: 1,
+            bearish_engulfing: 2, bearish_harami: 1, dark_cloud_cover: 1,
+            tweezer_top: 1, evening_star: 2,
+            double_top: 2, head_and_shoulders: 2,
+        };
+        const recent = (patterns || []).filter(p => p.index >= candleCount - 12);
+        let bull = 0, bear = 0;
+        recent.forEach(p => {
+            const weight = w[p.type];
+            if (!weight) return;                  // not a reversal pattern
+            if (p.direction === 'bullish') bull += weight;
+            else if (p.direction === 'bearish') bear += weight;
+        });
+        if (bull > bear) return 'BUY';
+        if (bear > bull) return 'SELL';
+        return 'NEUTRAL';
+    }
+
+    /**
+     * Combined REVERSAL verdict — what auto-trades now trigger on.
+     *
+     * A tradeable reversal needs BOTH signals to agree: the TDI/Bollinger/RSI
+     * bounce AND a reversal chart pattern (M/W, H&S or candlestick) in the
+     * same direction. Anything else = NEUTRAL (no reversal trade).
+     */
+    _reversalSignal(tdi, patterns, candles) {
+        const tdiRev = this._tdiReversal(tdi);
+        const patRev = this._reversalPatterns(patterns, candles ? candles.length : 0);
+        if (tdiRev === 'BUY' && patRev === 'BUY') return 'BUY';
+        if (tdiRev === 'SELL' && patRev === 'SELL') return 'SELL';
         return 'NEUTRAL';
     }
 

@@ -25,7 +25,7 @@ class TradingDashboardApp {
         // Analytics / trading helpers
         this._historyRows = [];
         this._autoTradeNotified = {};    // `auto:${symbol}:${tf}:${action}` -> last trade ts
-        this._autoTradeTimeframes = ['5m', '15m'];   // ONLY auto-trade these timeframes
+        this._autoTradeTimeframes = ['5m', '15m', '30m'];   // ONLY auto-trade these timeframes
         this._scannerSignals = [];
         this._tradeRisk = null;          // VaR/ES from ACTUAL trade results
         this._audioCtx = null;
@@ -263,7 +263,8 @@ class TradingDashboardApp {
             const stake = parseFloat((document.getElementById('tradeLotSize') || {}).value) || 1;
             const signal = this.signalEngine.generate(tdi, patterns, candles, { stake, payoutRatio: this._payoutRatio });
             const key = `${r.symbol}:${r.timeframe}`;
-            currentActions[key] = signal.action || 'NEUTRAL';
+            // Alerts/stale-cleanup now track the REVERSAL verdict (tradeable signal).
+            currentActions[key] = signal.reversal || 'NEUTRAL';
             analyzed.push({ symbol: r.symbol, timeframe: r.timeframe, candles, tdi, signal });
         });
 
@@ -274,11 +275,13 @@ class TradingDashboardApp {
             if (currentActions[`${sym}:${tf}`] !== act) delete this._scannerNotified[key];
         }
 
-        // Alert on any strong signal NOT on the active (symbol,timeframe).
+        // Alert ONLY on confirmed REVERSALS not on the active (symbol,timeframe) —
+        // matches the reversal-only auto-trade (no more pings for untradeable
+        // all-aligned signals).
         let marketCount = 0;
         analyzed.forEach(a => {
-            const act = a.signal.action;
-            if ((act === 'BUY' || act === 'SELL') && !(a.symbol === activeSym && a.timeframe === activeTf)) {
+            const rev = a.signal.reversal;
+            if ((rev === 'BUY' || rev === 'SELL') && !(a.symbol === activeSym && a.timeframe === activeTf)) {
                 marketCount++;
                 this._checkScannerAlert(a.symbol, a.timeframe, a.signal);
             }
@@ -352,18 +355,21 @@ class TradingDashboardApp {
      * toast + sound + desktop notification. Re-arms when the signal fades.
      */
     _checkScannerAlert(symbol, tf, signal) {
-        const action = signal.action;
+        // Only reversal verdicts are alerted now (they're what auto-trade fires on).
+        const action = (signal.reversal === 'BUY' || signal.reversal === 'SELL')
+            ? signal.reversal
+            : signal.action;
         const key = `${symbol}:${tf}:${action}`;
         if (this._scannerNotified[key]) return;
         this._scannerNotified[key] = true;
 
         const pct = Math.round((signal.strength || 0) * 100);
         this._notify(
-            `${symbol} ${tf} ${action} signal`,
-            `${symbol} · ${tf} — all aligned (TDI / M-W / Candles). ${signal.reason || ''} Strength ${pct}%.`
+            `${symbol} ${tf} ${action} REVERSAL`,
+            `${symbol} · ${tf} — ${action} reversal (TDI + Bollinger/RSI + M/W/H&S/candles). Strength ${pct}%.`
         );
         this._playAlertSound(action === 'BUY');
-        this._desktopNotify(`${symbol} ${tf} ${action} signal`, `${symbol} ${tf} — all aligned. Strength ${pct}%.`);
+        this._desktopNotify(`${symbol} ${tf} ${action} reversal`, `${symbol} ${tf} — ${action} reversal confirmed. Strength ${pct}%.`);
 
         const row = this.tfScannerList.querySelector(`.tf-scan-row[data-symbol="${symbol}"][data-tf="${tf}"]`);
         if (row) {
@@ -427,10 +433,12 @@ class TradingDashboardApp {
     }
 
     /**
-     * Auto-trade the OPEN chart signal when TDI + any one other are aligned.
+     * Auto-trade the OPEN chart signal — ONLY on a confirmed REVERSAL
+     * (TDI/Bollinger/RSI bounce agreed with an M/W, H&S or candlestick
+     * reversal pattern).
      */
     _maybeAutoTrade(signal, tdi, candles) {
-        const action = this._twoOfThreeAction(signal);
+        const action = this._reversalTradeAction(signal);
         if (!action) return;
         const strength = Math.round((this.signalEngine._strength(action, tdi, candles) || 0) * 100);
         // Pass the signal's suggested $ SL/TP so the auto-trade is protected.
@@ -441,13 +449,13 @@ class TradingDashboardApp {
     }
 
     /**
-     * Auto-trade ANY TDI + one-other signal found by the TF scanner across all
+     * Auto-trade ANY confirmed REVERSAL found by the TF scanner across all
      * symbols/timeframes (still limited to the allowed auto-trade timeframes).
      */
     _maybeAutoTradeScanner() {
         if (!this.autoTradeToggle || !this.autoTradeToggle.checked) return;
         (this._scannerSignals || []).forEach(a => {
-            const action = this._twoOfThreeAction(a.signal);
+            const action = this._reversalTradeAction(a.signal);
             if (!action) return;
             const strength = Math.round((this.signalEngine._strength(action, a.tdi, a.candles) || 0) * 100);
             // Apply the signal's suggested $ SL/TP for this symbol/timeframe.
@@ -459,12 +467,22 @@ class TradingDashboardApp {
     }
 
     /**
+     * Reversal-only trade trigger: returns BUY/SELL only when the combined
+     * reversal verdict is live, else null.
+     */
+    _reversalTradeAction(signal) {
+        if (!signal) return null;
+        const rev = signal.reversal;
+        return (rev === 'BUY' || rev === 'SELL') ? rev : null;
+    }
+
+    /**
      * Fire one auto-trade for (symbol, timeframe, action) respecting the
      * allowed-timeframe filter and a per-signal cooldown.
      */
     _autoTradeSignal(symbol, timeframe, action, strength, opts = {}) {
         if (!this.autoTradeToggle || !this.autoTradeToggle.checked) return;
-        if (!this._autoTradeTimeframes.includes(timeframe)) return;  // e.g. only 5m/15m
+        if (!this._autoTradeTimeframes.includes(timeframe)) return;  // only 5m/15m/30m
         if (action !== 'BUY' && action !== 'SELL') return;
         const minStr = parseFloat(this.autoTradeStrength.value) || 0;
         if (strength < minStr) return;
@@ -1306,15 +1324,20 @@ class TradingDashboardApp {
         this.signalContent.classList.remove('d-none');
 
         const action = signal.action || 'NEUTRAL';
-        const isBuy = action === 'BUY';
-        const isSell = action === 'SELL';
+        const rev = signal.reversal || 'NEUTRAL';
+        // The card now leads with the REVERSAL verdict (that's what auto-trade
+        // fires on); the all-aligned signal is still shown in the sub-badges.
+        const tradeAction = (rev === 'BUY' || rev === 'SELL') ? rev : action;
+        const isBuy = tradeAction === 'BUY';
+        const isSell = tradeAction === 'SELL';
         const badgeClass = isBuy ? 'bg-success' : (isSell ? 'bg-danger' : 'bg-secondary');
         const icon = isBuy ? 'bi-arrow-up-short' : (isSell ? 'bi-arrow-down-short' : 'bi-pause-fill');
         const cardClass = isBuy ? 'buy-active' : (isSell ? 'sell-active' : '');
+        const revTag = (rev === 'BUY' || rev === 'SELL') ? ' REV' : '';
 
         this.decisionBadge.innerHTML = `
             <span class="badge ${badgeClass} signal-badge signal-active">
-                <i class="bi ${icon}"></i> ${action === 'NEUTRAL' ? 'HOLD' : action}
+                <i class="bi ${icon}"></i> ${tradeAction === 'NEUTRAL' ? 'HOLD' : tradeAction}${revTag}
             </span>
         `;
 
@@ -1328,7 +1351,8 @@ class TradingDashboardApp {
             this.decisionSignalRow.innerHTML =
                 sub('TDI', signal.tdiAction) +
                 sub('M/W', signal.patternAction) +
-                sub('Candles', signal.candleAction);
+                sub('Candles', signal.candleAction) +
+                sub('Rev', rev === 'NEUTRAL' ? '—' : rev);
         }
 
         this.decisionSummary.innerHTML = `
@@ -1353,8 +1377,10 @@ class TradingDashboardApp {
         if (strengthEl) {
             const pct = Math.round((signal.strength || 0) * 100);
             const cls = pct >= 50 ? 'strong' : (pct >= 25 ? 'mid' : 'weak');
-            const isDir = action === 'BUY' || action === 'SELL';
-            const ctx = isDir ? ` &middot; ${action}` : ' &middot; HOLD (no all-aligned signal)';
+            const isDir = tradeAction === 'BUY' || tradeAction === 'SELL';
+            const ctx = isDir
+                ? ` &middot; ${tradeAction}${revTag ? ' reversal' : ''}`
+                : ' &middot; HOLD (no reversal signal)';
             strengthEl.innerHTML =
                 `<div class="strength-track"><div class="strength-fill ${cls}" style="width:${pct}%"></div></div>` +
                 `<span class="strength-label">Signal strength: ${pct}%${ctx}</span>`;

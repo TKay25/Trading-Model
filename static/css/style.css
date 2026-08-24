@@ -770,7 +770,11 @@ body {
 
 .history-title i { color: var(--accent-2); }
 
-.history-table-wrap { overflow-x: auto; }
+.history-table-wrap {
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: min(420px, 52vh);   /* scroll the history instead of stretching the page */
+}
 
 .history-table {
     width: 100%;
