@@ -29,6 +29,7 @@ import time
 
 from trading_service import Candle, PatternRecognizer
 from reversal_engine import ReversalEngine
+from deriv_api import SharedDerivConnection
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +45,8 @@ _MAX_POSITIONS_PER_SYMBOL = 5   # safety cap on open positions per symbol
 class AutoTrader:
     """Background thread that opens/closes multiplier trades on reversals."""
 
-    def __init__(self, deriv_call, resolve_multiplier, record_trade, position_monitor,
-                 symbols, timeframes):
-        # deriv_call(coro_factory, *, authenticated=..., timeout=...) — app._deriv_call
-        self._call = deriv_call
+    def __init__(self, resolve_multiplier, record_trade, position_monitor,
+                 symbols, timeframes, app_id, account_type, token):
         # resolve_multiplier(symbol, requested) -> nearest valid multiplier
         self._resolve_multiplier = resolve_multiplier
         # record_trade(contract_id, symbol, contract_type, lot, mult, sl, tp)
@@ -56,6 +55,13 @@ class AutoTrader:
         self._symbols = list(symbols)
         self._tfs = dict(timeframes)
         self._engine = ReversalEngine()
+        # DEDICATED connection: the AutoTrader's heavy scan (40 candle fetches
+        # every cycle) must NOT share the frontend's connection, or frontend
+        # requests (/api/candles, /api/connect, /api/multipliers) get starved
+        # and time out on Render while the bot keeps trading.
+        self._token = token
+        self._conn = SharedDerivConnection(app_id=app_id, account_type=account_type)
+        self._conn.start()
 
         self._lock = threading.Lock()
         self._thread = None
@@ -252,6 +258,14 @@ class AutoTrader:
     def _set_last(self, **kw):
         with self._lock:
             self._last_cycle.update(kw)
+
+    def _call(self, coro_factory, authenticated=False, timeout=45):
+        """Run a coroutine over THIS AutoTrader's DEDICATED connection so its
+        heavy scanning never starves the frontend's shared connection."""
+        try:
+            return self._conn.call(coro_factory, token=self._token, timeout=timeout)
+        except (asyncio.TimeoutError, TimeoutError):
+            raise TimeoutError(f"Deriv request timed out after {timeout}s") from None
 
     @staticmethod
     def _norm(candles):

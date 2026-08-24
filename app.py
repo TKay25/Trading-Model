@@ -167,13 +167,15 @@ def init_services():
     _get_shared_conn()  # start the persistent connection thread
     if auto_trader is None:
         auto_trader = AutoTrader(
-            deriv_call=_deriv_call,
             resolve_multiplier=lambda sym, req: _nearest_multiplier(
                 req, _get_valid_multipliers(sym) or []),
             record_trade=_record_trade_ledger,
             position_monitor=position_monitor,
             symbols=Config.VOLATILITY_INDICES.keys(),
             timeframes=Config.TIMEFRAMES,
+            app_id=Config.DERIV_APP_ID,
+            account_type=Config.DERIV_ACCOUNT_TYPE,
+            token=Config.DERIV_API_TOKEN,
         )
         auto_trader.start()
 
@@ -237,6 +239,22 @@ def add_no_cache_headers(response):
 # but R_50 accepts 80/200/400/600/800 and R_10 accepts 400/1000/2000/3000/4000.
 _VALID_MULTIPLIERS = {}
 
+# Known-valid multiplier sets per underlying (discovered via contracts_for).
+# Used as an instant fallback so /api/multipliers + auto-trades never block or
+# fail when the live contracts_for lookup is slow/throttled (e.g. on Render).
+_DEFAULT_MULTIPLIERS = {
+    "R_10": [400, 1000, 2000, 3000, 4000],
+    "R_25": [160, 400, 800, 1200, 1600],
+    "R_50": [80, 200, 400, 600, 800],
+    "R_75": [50, 100, 200, 300, 500],
+    "R_100": [40, 100, 200, 300, 400],
+    "1HZ10V": [400, 1000, 2000, 3000, 4000],
+    "1HZ25V": [160, 400, 800, 1200, 1600],
+    "1HZ50V": [80, 200, 400, 600, 800],
+    "1HZ75V": [50, 100, 200, 300, 500],
+    "1HZ100V": [40, 100, 200, 300, 400],
+}
+
 
 def _get_valid_multipliers(symbol):
     """Return the multiplier values Deriv accepts for `symbol` (cached)."""
@@ -252,7 +270,11 @@ def _get_valid_multipliers(symbol):
             return values
     except Exception as e:
         logger.warning("Failed to fetch valid multipliers for %s: %s", symbol, e)
-    return None
+    # Fall back to the known set so the frontend dropdown + auto-trades always
+    # have a valid multiplier, even when Deriv's contracts_for is slow/throttled.
+    default = _DEFAULT_MULTIPLIERS.get(symbol, [50, 100, 200, 300, 500])
+    _VALID_MULTIPLIERS[symbol] = default
+    return default
 
 
 def _warm_multiplier_cache():
