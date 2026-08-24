@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, render_template, request, jsonify, session, Response
 from config import Config
-from deriv_api import DerivAPI
+from deriv_api import DerivAPI, SharedDerivConnection
 from live_balance_stream import LiveBalanceStream
 from live_stream import LiveDerivStream
 from position_monitor import PositionMonitor
@@ -31,6 +31,7 @@ trading_service: TradingService = None
 live_stream: LiveDerivStream = None
 balance_stream: LiveBalanceStream = None
 position_monitor: PositionMonitor = None
+_shared_conn: SharedDerivConnection = None
 
 # In-app ledger of trades placed through this app (contract_id -> metadata).
 # Deriv's profit_table/portfolio omit symbol, lot size and SL/TP, so we keep
@@ -98,46 +99,44 @@ def init_services():
     if position_monitor is None:
         position_monitor = PositionMonitor()
         position_monitor.start()
+    _get_shared_conn()  # start the persistent connection thread
+
+
+def _get_shared_conn():
+    global _shared_conn
+    if _shared_conn is None:
+        _shared_conn = SharedDerivConnection(
+            app_id=Config.DERIV_APP_ID,
+            account_type=Config.DERIV_ACCOUNT_TYPE,
+        )
+        _shared_conn.start()
+    return _shared_conn
+
+
+def _session_token():
+    """Safe read of the per-session Deriv token (None outside a request context)."""
+    try:
+        return session.get("deriv_api_token")
+    except RuntimeError:
+        return None
 
 
 def _deriv_call(coro_factory, token=None, authenticated=False, timeout=45):
-    """Open a fresh Deriv WebSocket connection, run coro_factory(api), and clean up.
+    """Run coro_factory(api) over a SINGLE shared authenticated connection.
 
-    Each request gets its own event loop and connection so that a slow or
-    failed request can never poison the next one. A HARD overall timeout wraps
-    BOTH the connect and the call so no request can hang a gunicorn worker:
-    on Render, a stalled Deriv connect otherwise trips the worker timeout and
-    the worker gets killed (crash loop). A timeout here returns a clean error
-    instead.
+    Previously every API call opened its own Deriv WebSocket (connect -> request
+    -> close), churning dozens of connections that Deriv throttled / timed out
+    from Render's datacenter. Now all routes multiplex over one persistent
+    connection: DerivAPI._send_request already routes concurrent requests by
+    req_id, and this wraps the call in a hard timeout so no request can hang a
+    gunicorn worker (returns a clean TimeoutError instead).
 
-    When authenticated=True the token priority is: explicit token > this
-    session's connected token > DERIV_API_TOKEN (.env), and the new-API OTP
-    flow is used. Public endpoints connect to the public WS (no token, no OTP).
+    Token priority (same as before): explicit token > this session's connected
+    token > DERIV_API_TOKEN (.env).
     """
-    effective_token = ""
-    if authenticated:
-        effective_token = token or session.get("deriv_api_token") or Config.DERIV_API_TOKEN
-    api = DerivAPI(
-        app_id=Config.DERIV_APP_ID,
-        api_token=effective_token,
-        account_type=Config.DERIV_ACCOUNT_TYPE,
-    )
-
-    async def _runner():
-        try:
-            await asyncio.wait_for(
-                api.connect(authenticated=authenticated, timeout=timeout),
-                timeout=timeout,
-            )
-            return await asyncio.wait_for(coro_factory(api), timeout=timeout)
-        finally:
-            try:
-                await asyncio.wait_for(api.close(), timeout=5)
-            except Exception:
-                pass
-
+    effective_token = token or _session_token() or Config.DERIV_API_TOKEN
     try:
-        return asyncio.run(_runner())
+        return _get_shared_conn().call(coro_factory, token=effective_token, timeout=timeout)
     except (asyncio.TimeoutError, TimeoutError):
         logger.error("Deriv request timed out after %ss", timeout)
         raise TimeoutError(f"Deriv request timed out after {timeout}s")

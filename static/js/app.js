@@ -433,7 +433,11 @@ class TradingDashboardApp {
         const action = this._twoOfThreeAction(signal);
         if (!action) return;
         const strength = Math.round((this.signalEngine._strength(action, tdi, candles) || 0) * 100);
-        this._autoTradeSignal(this.symbol, this.timeframe, action, strength);
+        // Pass the signal's suggested $ SL/TP so the auto-trade is protected.
+        this._autoTradeSignal(this.symbol, this.timeframe, action, strength, {
+            stopLoss: signal.stop_loss,
+            takeProfit: signal.take_profit,
+        });
     }
 
     /**
@@ -446,7 +450,11 @@ class TradingDashboardApp {
             const action = this._twoOfThreeAction(a.signal);
             if (!action) return;
             const strength = Math.round((this.signalEngine._strength(action, a.tdi, a.candles) || 0) * 100);
-            this._autoTradeSignal(a.symbol, a.timeframe, action, strength);
+            // Apply the signal's suggested $ SL/TP for this symbol/timeframe.
+            this._autoTradeSignal(a.symbol, a.timeframe, action, strength, {
+                stopLoss: a.signal.stop_loss,
+                takeProfit: a.signal.take_profit,
+            });
         });
     }
 
@@ -454,7 +462,7 @@ class TradingDashboardApp {
      * Fire one auto-trade for (symbol, timeframe, action) respecting the
      * allowed-timeframe filter and a per-signal cooldown.
      */
-    _autoTradeSignal(symbol, timeframe, action, strength) {
+    _autoTradeSignal(symbol, timeframe, action, strength, opts = {}) {
         if (!this.autoTradeToggle || !this.autoTradeToggle.checked) return;
         if (!this._autoTradeTimeframes.includes(timeframe)) return;  // e.g. only 5m/15m
         if (action !== 'BUY' && action !== 'SELL') return;
@@ -465,7 +473,7 @@ class TradingDashboardApp {
         if ((this._autoTradeNotified[key] || 0) > now - 90000) return; // 90s per-signal cooldown
         this._autoTradeNotified[key] = now;
         if (typeof tradingControls.autoTrade === 'function') {
-            tradingControls.autoTrade(action, strength, this.autoTradePaper && this.autoTradePaper.checked, symbol, timeframe);
+            tradingControls.autoTrade(action, strength, this.autoTradePaper && this.autoTradePaper.checked, symbol, timeframe, opts);
         }
     }
 

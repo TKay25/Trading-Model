@@ -746,12 +746,11 @@ class SignalEngine {
         const candleAction = this._patternAction(patterns, n, { mw: false }); // candlestick formations only
         const overall = this._combine(tdiAction, patternAction, candleAction);
 
-        // Suggested $ SL/TP, scaled to the lot size (stake) with a 1:2 risk/reward.
+        // Suggested $ SL/TP for MULTIPLIER positions, scaled to the lot size
+        // (stake): stop-loss at -50% of the stake, take-profit at +100% (1:2).
         const stake = (opts.stake && opts.stake > 0) ? opts.stake : 1;
-        const payoutRatio = (opts.payoutRatio && opts.payoutRatio > 1) ? opts.payoutRatio : 1.82;
-        const maxProfit = stake * (payoutRatio - 1);
         const suggestedSl = stake * 0.5;
-        const suggestedTp = Math.min(suggestedSl * 2, maxProfit);
+        const suggestedTp = stake * 1.0;
         const isDirectional = overall.action === 'BUY' || overall.action === 'SELL';
 
         return {

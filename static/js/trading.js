@@ -355,7 +355,7 @@ class TradingControls {
     /**
      * Open a Buy (Long) or Sell (Short) position.
      */
-    async _placeTrade(direction) {
+    async _placeTrade(direction, opts = {}) {
         const lotSize = parseFloat(this.tradeLotSize.value);
 
         if (!lotSize || lotSize <= 0) {
@@ -374,6 +374,15 @@ class TradingControls {
         // target markets whose valid multiplier set excludes the current pick).
         const multiplier = await this._resolveMultiplier(this.currentSymbol);
 
+        // Auto-trades apply the signal's suggested $ SL/TP (priority over the
+        // manual Quick Trade fields); manual trades use the typed fields.
+        const stopLoss = (opts.stopLoss && opts.stopLoss > 0)
+            ? opts.stopLoss
+            : (parseFloat(this.stopLossInput.value) || 0);
+        const takeProfit = (opts.takeProfit && opts.takeProfit > 0)
+            ? opts.takeProfit
+            : (parseFloat(this.takeProfitInput.value) || 0);
+
         this._showTradeStatus(`Opening ${direction} ${multiplier}× position...`, 'info');
         this.btnBuy.disabled = true;
         this.btnSell.disabled = true;
@@ -387,8 +396,8 @@ class TradingControls {
                     lot_size: lotSize,
                     direction: direction,
                     multiplier: multiplier,
-                    stop_loss: parseFloat(this.stopLossInput.value) || 0,
-                    take_profit: parseFloat(this.takeProfitInput.value) || 0,
+                    stop_loss: stopLoss,
+                    take_profit: takeProfit,
                     break_even: !!(document.getElementById('breakEvenToggle') || {}).checked,
                     trail: !!(document.getElementById('trailToggle') || {}).checked,
                 }),
@@ -398,8 +407,11 @@ class TradingControls {
 
             if (data.success) {
                 const used = data.multiplier || multiplier;
+                const targets = (stopLoss > 0 || takeProfit > 0)
+                    ? `SL $${stopLoss.toFixed(2)} / TP $${takeProfit.toFixed(2)}`
+                    : 'open until SL/TP or close';
                 this._showTradeStatus(
-                    `${direction} ${used}× position opened — open until SL/TP or close`,
+                    `${direction} ${used}× position opened — ${targets}`,
                     'success'
                 );
                 // Refresh positions AND history so the live trade shows
@@ -420,7 +432,7 @@ class TradingControls {
      * Auto-trade an all-aligned signal from the signal engine.
      * Paper mode only simulates; otherwise it places a real (demo/live) trade.
      */
-    async autoTrade(action, strength, paper = true, symbol = null, timeframe = null) {
+    async autoTrade(action, strength, paper = true, symbol = null, timeframe = null, opts = {}) {
         const dir = action === 'BUY' ? 'BUY' : 'SELL';
         const sym = symbol || (window.app ? window.app.symbol : this.currentSymbol);
         const tf = timeframe || (window.app ? window.app.timeframe : '');
@@ -437,8 +449,9 @@ class TradingControls {
         // Note: we intentionally do NOT refresh the multiplier dropdown here —
         // it should keep showing the user's chart symbol. _placeTrade resolves a
         // valid multiplier for the auto-trade target via _resolveMultiplier().
+        // opts carries the signal's suggested $ SL/TP for protective auto-closes.
         if (window.app) window.app._lastDirection = dir;
-        await this._placeTrade(dir);
+        await this._placeTrade(dir, opts);
     }
 
     /**

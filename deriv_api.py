@@ -10,6 +10,8 @@ Uses Deriv's NEW API:
 """
 import json
 import asyncio
+import concurrent.futures
+import threading
 import traceback
 import urllib.request
 import urllib.error
@@ -408,3 +410,85 @@ class DerivAPI:
 
         self._authenticated = False
         logger.info("Deriv WebSocket connection closed")
+
+
+class SharedDerivConnection:
+    """One persistent authenticated Deriv WebSocket connection, shared by all API routes.
+
+    Flask serves requests in many threads, but a single websocket + event loop can only
+    run in one thread. This keeps the loop in a dedicated daemon thread and submits each
+    route's coroutine with ``asyncio.run_coroutine_threadsafe``; Deriv's req_id routing
+    multiplexes concurrent requests on the one connection. Removing the open/close churn
+    is what stops the connect timeouts seen from Render's datacenter (Deriv throttles
+    rapid reconnects). Reconnects automatically if the socket drops or the token changes.
+    """
+
+    def __init__(self, app_id: str, account_type: str = "demo"):
+        self.app_id = app_id
+        self.account_type = account_type
+        self._token = None
+        self._api = None
+        self._reconnect_lock = None   # asyncio.Lock, created once the loop is running
+        self._loop = None
+        self._loop_ready = threading.Event()
+
+    # ---- lifecycle ----------------------------------------------------
+    def start(self):
+        if self._loop is not None:
+            return
+        self._loop = asyncio.new_event_loop()
+        threading.Thread(target=self._run, daemon=True, name="deriv-shared-conn").start()
+        self._loop_ready.wait(timeout=10)
+
+    def _run(self):
+        asyncio.set_event_loop(self._loop)
+        self._reconnect_lock = asyncio.Lock()
+        self._loop_ready.set()
+        self._loop.run_forever()
+
+    # ---- thread-safe entry point --------------------------------------
+    def call(self, coro_factory, token: str = "", timeout: float = 45.0):
+        """Run ``coro_factory(api)`` on the shared connection from any thread."""
+        if self._loop is None:
+            self.start()
+        fut = asyncio.run_coroutine_threadsafe(
+            self._run_on_loop(coro_factory, token, timeout), self._loop
+        )
+        try:
+            return fut.result(timeout=timeout + 15)
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError(f"Deriv request timed out after {timeout}s") from None
+
+    # ---- loop-internal -------------------------------------------------
+    async def _run_on_loop(self, coro_factory, token, timeout):
+        api = await self._ensure(token)
+        return await asyncio.wait_for(coro_factory(api), timeout=timeout)
+
+    def _is_live(self):
+        api = self._api
+        if api is None or getattr(api, "_ws", None) is None:
+            return False
+        try:
+            # websockets 16 exposes connection state as an enum (.name in
+            # CONNECTING / OPEN / CLOSING / CLOSED) — no .closed/.open attrs.
+            return getattr(api._ws.state, "name", "OPEN") == "OPEN"
+        except Exception:
+            return True
+
+    async def _ensure(self, token: str):
+        """Return a live authenticated api, reconnecting if dropped or token changed."""
+        async with self._reconnect_lock:
+            if self._is_live() and self._token == token:
+                return self._api
+            try:
+                if self._api is not None:
+                    await self._api.close()
+            except Exception:
+                pass
+            self._api = None
+            api = DerivAPI(app_id=self.app_id, api_token=token, account_type=self.account_type)
+            await asyncio.wait_for(api.connect(authenticated=True, timeout=45), timeout=55)
+            self._api = api
+            self._token = token
+            logger.info("Shared Deriv connection established (type=%s)", self.account_type)
+            return api
