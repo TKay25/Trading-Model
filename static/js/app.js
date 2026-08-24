@@ -196,7 +196,7 @@ class TradingDashboardApp {
         const stake = parseFloat((document.getElementById('tradeLotSize') || {}).value) || 1;
         const body = {
             enabled: !!(this.autoTradeToggle && this.autoTradeToggle.checked),
-            min_strength: parseFloat(this.autoTradeStrength && this.autoTradeStrength.value) || 70,
+            min_strength: parseFloat(this.autoTradeStrength && this.autoTradeStrength.value) || 30,
             paper: !!(this.autoTradePaper && this.autoTradePaper.checked),
             exit_on_reversal: !!(this.autoExitReversal && this.autoExitReversal.checked),
             stake: stake,

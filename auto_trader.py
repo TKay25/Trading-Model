@@ -7,8 +7,12 @@ RSI bounce + M/W/H&S + candlestick confluence) and the persistent shared Deriv
 connection, so it behaves exactly like the old in-browser auto-trader:
 
   - OPEN  : a BUY/SELL reversal on 5m/15m/30m (1m-confirmed strength >= min)
-            opens a MULTIPLIER trade with SL = 50% / TP = 100% of the stake,
-            but only when the symbol has no open position (no hedging/stacking).
+            opens a MULTIPLIER trade with NO fixed SL/TP — the position runs
+            until the reversal exit closes it, the user closes it manually, or
+            Deriv auto-closes it at -100% of the stake (multiplier behaviour).
+            MULTIPLE positions per symbol are allowed (same direction); the bot
+            never opens the opposite direction of an existing position (no
+            self-hedging) and caps open positions per symbol.
   - CLOSE : a reversal OPPOSITE to an open position closes that symbol.
 
 Config is pushed from the dashboard (POST /api/auto/config) and persisted to a
@@ -29,11 +33,10 @@ logger = logging.getLogger(__name__)
 _CONF_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auto_trader_config.json")
 _SIGNAL_TFS = ("5m", "15m", "30m")
 _CONFIRM_TF = "1m"
-_COOLDOWN = 90.0          # seconds between auto-actions per symbol
+_COOLDOWN = 90.0          # seconds between auto-actions per (symbol, timeframe)
 _INTERVAL = 25            # seconds between scan/decision cycles
 _SCAN_COUNT = 150         # candles per timeframe per symbol
-_SL_PCT = 0.5             # stop-loss = 50% of the stake
-_TP_PCT = 1.0             # take-profit = 100% of the stake (1:2)
+_MAX_POSITIONS_PER_SYMBOL = 5   # safety cap on open positions per symbol
 
 
 class AutoTrader:
@@ -62,7 +65,7 @@ class AutoTrader:
         # is persisted too).
         self._cfg = {
             "enabled": True,
-            "min_strength": 70,
+            "min_strength": 30,
             "paper": False,
             "exit_on_reversal": True,
             "stake": 1.0,
@@ -193,22 +196,34 @@ class AutoTrader:
                 except Exception as e:
                     logger.warning("Auto-exit failed for %s: %r", sym, e)
 
-        # ---- OPEN: strong reversal, symbol has no open position ----
+        # ---- OPEN: strong reversal signals. Multiple positions per symbol are
+        # allowed (one per timeframe per cooldown window), but the bot never
+        # opens the OPPOSITE direction of a position it already holds, and it
+        # caps the number of open positions per symbol as a safety limit. ----
         if cfg.get("enabled"):
+            cycle_opened = {}   # sym -> directions opened THIS cycle
             for sym, hits in signals.items():
-                if sym in open_syms:
+                counts = open_syms.get(sym) or {}
+                if sum(counts.values()) >= _MAX_POSITIONS_PER_SYMBOL:
                     continue
-                if now - self._cooldown.get(sym, 0) < _COOLDOWN:
-                    continue
-                best = max(hits, key=lambda x: x["str"])
-                if best["str"] < cfg.get("min_strength", 70):
-                    continue
-                self._cooldown[sym] = now
-                try:
-                    if self._open_trade(sym, best, cfg):
-                        opened.append(f"{sym}:{best['rev']}@{best['str']}%")
-                except Exception as e:
-                    logger.warning("Auto-open failed for %s: %r", sym, e)
+                for hit in hits:
+                    opposite = "SELL" if hit["rev"] == "BUY" else "BUY"
+                    opened_dirs = cycle_opened.get(sym, set())
+                    # no self-hedging: skip if we already hold the opposite direction
+                    if counts.get(opposite, 0) > 0 or opposite in opened_dirs:
+                        continue
+                    ckey = (sym, hit["tf"])
+                    if now - self._cooldown.get(ckey, 0) < _COOLDOWN:
+                        continue
+                    if hit["str"] < cfg.get("min_strength", 30):
+                        continue
+                    self._cooldown[ckey] = now
+                    try:
+                        if self._open_trade(sym, hit, cfg):
+                            opened.append(f"{sym}:{hit['rev']}@{hit['str']}% ({hit['tf']})")
+                            cycle_opened.setdefault(sym, set()).add(hit["rev"])
+                    except Exception as e:
+                        logger.warning("Auto-open failed for %s: %r", sym, e)
 
         self._set_last(at=now, opened=opened, closed=closed,
                        scan=sum(len(v) for v in candles_by.values()),
@@ -262,6 +277,7 @@ class AutoTrader:
             return {}
 
     def _open_symbols(self):
+        """Return {symbol: {direction: count}} of currently open positions."""
         out = {}
         try:
             async def _port(api):
@@ -274,8 +290,9 @@ class AutoTrader:
                 ct = str(c.get("contract_type") or "").upper()
                 if not sym:
                     continue
-                out.setdefault(sym, set()).add(
-                    "SELL" if any(x in ct for x in ("DOWN", "PUT")) else "BUY")
+                direction = "SELL" if any(x in ct for x in ("DOWN", "PUT")) else "BUY"
+                counts = out.setdefault(sym, {})
+                counts[direction] = counts.get(direction, 0) + 1
         except Exception as e:
             logger.warning("Auto-trader portfolio fetch failed: %r", e)
         return out
@@ -308,13 +325,16 @@ class AutoTrader:
         direction = hit["rev"]
         requested = int(cfg.get("multiplier", 100) or 100)
         multiplier = self._resolve_multiplier(symbol, requested)
-        sl = round(stake * _SL_PCT, 2)
-        tp = round(stake * _TP_PCT, 2)
         contract_type = "MULTUP" if direction == "BUY" else "MULTDOWN"
 
+        # USER RULE: NO fixed SL/TP amounts. The position stays open until the
+        # reversal exit fires (opposite TDI + M/W + candlestick signal), the
+        # user closes it manually, or Deriv auto-closes it at -100% of the stake.
+        sl = tp = 0.0
+
         if cfg.get("paper"):
-            logger.info("PAPER auto-trade %s %s @ %s%% (%s) lot=%.3f mult=%s sl=%s tp=%s",
-                        direction, symbol, hit["str"], hit["tf"], stake, multiplier, sl, tp)
+            logger.info("PAPER auto-trade %s %s @ %s%% (%s) lot=%.3f mult=%s (no SL/TP — reversal exit only)",
+                        direction, symbol, hit["str"], hit["tf"], stake, multiplier)
             return True
 
         async def _buy(api):
@@ -326,7 +346,7 @@ class AutoTrader:
             if sl > 0 or tp > 0:
                 self._pm.track(cid, symbol, sl, tp)
             self._record_trade(cid, symbol, contract_type, stake, multiplier, sl, tp)
-            logger.info("Auto-trade opened %s %s @ %s%% lot=%.3f mult=%s -> cid=%s",
+            logger.info("Auto-trade opened %s %s @ %s%% lot=%.3f mult=%s -> cid=%s (no SL/TP — reversal exit only)",
                         direction, symbol, hit["str"], stake, multiplier, cid)
             return True
         logger.warning("Auto-trade rejected for %s: %s", symbol, result)
