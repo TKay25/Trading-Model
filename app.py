@@ -16,6 +16,48 @@ from trading_service import (
     TradingService, Candle, PatternRecognizer, TDICalculator
 )
 
+# ---------------------------------------------------------------------------
+# idna codec shim (Render crash fix, 2026-08-24)
+# Python 3.14 REMOVED the stdlib "idna" codec. Werkzeug binds the Host header
+# via server_name.encode("idna"); on a Python build without the codec EVERY
+# request dies with "LookupError: unknown encoding: idna" (this crashed the
+# Render deployment). Re-register the codec at import time so the app works
+# even with an older Werkzeug on a Python 3.14 build that lacks it. Render
+# hostnames are ASCII, so an ASCII-passthrough codec is functionally correct.
+# ---------------------------------------------------------------------------
+import codecs as _codecs
+try:
+    _codecs.lookup("idna")
+except LookupError:
+    try:
+        import encodings.idna  # noqa: F401  # <3.14: re-registers the stdlib codec
+        _codecs.lookup("idna")
+    except (LookupError, ImportError):
+        def _idna_encode(text, errors="strict"):
+            if isinstance(text, str):
+                text = text.encode("ascii", errors)
+            return bytes(text), len(text)
+
+        def _idna_decode(data, errors="strict"):
+            if isinstance(data, bytes):
+                data = data.decode("ascii", errors)
+            return str(data), len(data)
+
+        def _idna_search(name):
+            if name == "idna":
+                return _codecs.CodecInfo(
+                    name="idna",
+                    encode=_idna_encode,
+                    decode=_idna_decode,
+                    incrementalencoder=None,
+                    incrementaldecoder=None,
+                    streamreader=None,
+                    streamwriter=None,
+                )
+            return None
+
+        _codecs.register(_idna_search)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,

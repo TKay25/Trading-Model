@@ -24,10 +24,11 @@ class TradingDashboardApp {
 
         // Analytics / trading helpers
         this._historyRows = [];
-        this._autoTradeNotified = {};    // `auto:${symbol}:${tf}:${action}` -> last trade ts
+        this._autoTradeNotified = {};    // `auto:${symbol}:${tf}:${action}` + `autoSym:${symbol}` -> last trade ts
         this._autoTradeTimeframes = ['5m', '15m', '30m'];   // ONLY auto-trade these timeframes
         this._scannerSignals = [];
         this._oneMin = {};               // symbol -> 1m candles (candle-confirmation for signals)
+        this._openPositions = [];        // current open positions (guard: one per symbol, no hedging)
         this._tradeRisk = null;          // VaR/ES from ACTUAL trade results
         this._audioCtx = null;
 
@@ -520,12 +521,20 @@ class TradingDashboardApp {
         if (!this.autoTradeToggle || !this.autoTradeToggle.checked) return;
         if (!this._autoTradeTimeframes.includes(timeframe)) return;  // only 5m/15m/30m
         if (action !== 'BUY' && action !== 'SELL') return;
+        // Never hedge or stack: skip if this symbol already has an open position.
+        if (this._openPositions && this._openPositions.some(p => p.symbol === symbol)) return;
         const minStr = parseFloat(this.autoTradeStrength.value) || 0;
         if (strength < minStr) return;
         const now = Date.now();
+        // One auto-trade per symbol per 90s (ANY timeframe/direction). Without this,
+        // a BUY on 5m and a SELL on 15m of the same symbol can both be live in one
+        // scan -> two OPPOSITE trades on the same instrument at once.
+        const symKey = `autoSym:${symbol}`;
+        if ((this._autoTradeNotified[symKey] || 0) > now - 90000) return;
         const key = `auto:${symbol}:${timeframe}:${action}`;
         if ((this._autoTradeNotified[key] || 0) > now - 90000) return; // 90s per-signal cooldown
         this._autoTradeNotified[key] = now;
+        this._autoTradeNotified[symKey] = now;
         if (typeof tradingControls.autoTrade === 'function') {
             tradingControls.autoTrade(action, strength, this.autoTradePaper && this.autoTradePaper.checked, symbol, timeframe, opts);
         }
@@ -939,10 +948,13 @@ class TradingDashboardApp {
             }
         } catch (err) {
             this.positionsBody.innerHTML = '<div class="positions-empty">Failed to load positions</div>';
+            this._openPositions = [];
         }
     }
 
     _renderPositions(positions) {
+        // Remember open positions so auto-trade won't hedge/stack on a symbol.
+        this._openPositions = (positions && positions.length) ? positions : [];
         const countEl = document.getElementById('positionsCount');
         const netEl = document.getElementById('positionsNet');
         const openEl = document.getElementById('statOpen');
