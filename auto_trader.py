@@ -13,7 +13,9 @@ connection, so it behaves exactly like the old in-browser auto-trader:
             MULTIPLE positions per symbol are allowed (same direction); the bot
             never opens the opposite direction of an existing position (no
             self-hedging) and caps open positions per symbol.
-  - CLOSE : a reversal OPPOSITE to an open position closes that symbol.
+  - CLOSE : a trade-strength reversal OPPOSITE to a held direction closes those
+            positions (e.g. a BUY reversal closes the running SELL positions on
+            that instrument, then the same signal can open a BUY).
 
 Config is pushed from the dashboard (POST /api/auto/config) and persisted to a
 small JSON file so the choices survive restarts.
@@ -71,8 +73,8 @@ class AutoTrader:
             "stake": 1.0,
             "multiplier": 100,
         }
-        self._cooldown = {}        # symbol -> last OPEN ts
-        self._exit_cooldown = {}   # symbol -> last CLOSE ts
+        self._cooldown = {}        # (symbol, tf) -> last OPEN ts
+        self._exit_cooldown = {}   # (symbol, direction) -> last close ts
         self._last_cycle = {"at": None, "opened": [], "closed": [], "scan": 0,
                             "message": "not started"}
         self._load_cfg()
@@ -180,21 +182,32 @@ class AutoTrader:
         opened, closed = [], []
         now = time.time()
 
-        # ---- CLOSE: opposite reversal on a symbol with an open position ----
+        # ---- CLOSE: a trade-strength reversal OPPOSITE to a held direction
+        # closes those positions (e.g. a BUY reversal closes the running SELL
+        # positions on that instrument). Only the opposing direction is closed,
+        # and only when the reversal is at/above the open threshold (>= min) —
+        # a weak opposite signal does NOT close positions. ----
+        closed_dirs = {}   # sym -> {direction: closed count this cycle}
         if cfg.get("exit_on_reversal"):
-            for sym, dirs in open_syms.items():
-                hits = signals.get(sym, [])
-                if not any(self._opposes(d, h) for d in dirs for h in hits):
-                    continue
-                if now - self._exit_cooldown.get(sym, 0) < _COOLDOWN:
-                    continue
-                self._exit_cooldown[sym] = now
-                try:
-                    n = self._close_symbol(sym)
-                    if n:
-                        closed.append(f"{sym}x{n}")
-                except Exception as e:
-                    logger.warning("Auto-exit failed for %s: %r", sym, e)
+            min_str = cfg.get("min_strength", 30)
+            for sym, counts in open_syms.items():
+                for d in counts:                      # each held direction
+                    opposite_rev = "SELL" if d == "BUY" else "BUY"
+                    if not any(h["rev"] == opposite_rev and h["str"] >= min_str
+                               for h in signals.get(sym, [])):
+                        continue
+                    ckey = (sym, d)
+                    if now - self._exit_cooldown.get(ckey, 0) < _COOLDOWN:
+                        continue
+                    self._exit_cooldown[ckey] = now
+                    try:
+                        n = self._close_symbol(sym, d)
+                        if n:
+                            closed.append(f"{sym}:{d}x{n}")
+                            closed_dirs.setdefault(sym, {})[d] = \
+                                closed_dirs.get(sym, {}).get(d, 0) + n
+                    except Exception as e:
+                        logger.warning("Auto-exit failed for %s: %r", sym, e)
 
         # ---- OPEN: strong reversal signals. Multiple positions per symbol are
         # allowed (one per timeframe per cooldown window), but the bot never
@@ -209,8 +222,11 @@ class AutoTrader:
                 for hit in hits:
                     opposite = "SELL" if hit["rev"] == "BUY" else "BUY"
                     opened_dirs = cycle_opened.get(sym, set())
-                    # no self-hedging: skip if we already hold the opposite direction
-                    if counts.get(opposite, 0) > 0 or opposite in opened_dirs:
+                    # no self-hedging: skip if we still hold the opposite direction
+                    # (positions closed this cycle don't count as still held)
+                    held_opposite = counts.get(opposite, 0) - \
+                        closed_dirs.get(sym, {}).get(opposite, 0)
+                    if held_opposite > 0 or opposite in opened_dirs:
                         continue
                     ckey = (sym, hit["tf"])
                     if now - self._cooldown.get(ckey, 0) < _COOLDOWN:
@@ -254,11 +270,6 @@ class AutoTrader:
                 continue
         return out
 
-    @staticmethod
-    def _opposes(direction, hit):
-        return (direction == "BUY" and hit["rev"] == "SELL") or \
-               (direction == "SELL" and hit["rev"] == "BUY")
-
     def _scan_candles(self):
         async def _scan(api):
             keys = [(s, tf) for s in self._symbols
@@ -297,7 +308,8 @@ class AutoTrader:
             logger.warning("Auto-trader portfolio fetch failed: %r", e)
         return out
 
-    def _close_symbol(self, symbol):
+    def _close_symbol(self, symbol, direction):
+        """Sell every open position on `symbol` that is in `direction` (BUY/SELL)."""
         async def _close(api):
             port = await api.get_portfolio()
             pt = port.get("portfolio", {}) if isinstance(port, dict) else {}
@@ -305,7 +317,11 @@ class AutoTrader:
             closed = []
             for c in contracts:
                 cid = c.get("contract_id")
+                ct = str(c.get("contract_type") or "").upper()
                 if not cid or (c.get("underlying_symbol") or "") != symbol:
+                    continue
+                cdir = "SELL" if any(x in ct for x in ("DOWN", "PUT")) else "BUY"
+                if cdir != direction:
                     continue
                 try:
                     await api.sell_contract(cid)
@@ -317,7 +333,7 @@ class AutoTrader:
         for cid in cids:
             self._pm.untrack(cid)
         if cids:
-            logger.info("Auto-trader closed %d position(s) on %s", len(cids), symbol)
+            logger.info("Auto-trader closed %d %s position(s) on %s", len(cids), direction, symbol)
         return len(cids)
 
     def _open_trade(self, symbol, hit, cfg):
