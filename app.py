@@ -531,7 +531,10 @@ def scanner():
         return results
 
     try:
-        results = _deriv_call(_scan)
+        # The scanner is display-only now (the server-side AutoTrader trades), so
+        # give it a generous timeout — from Render's datacenter a 70-request scan
+        # can be slow and must never 500 the page.
+        results = _deriv_call(_scan, timeout=90)
         return jsonify({"success": True, "symbol": symbol, "symbols": syms, "results": results})
     except Exception as e:
         logger.error(f"Error in scanner: {e}")

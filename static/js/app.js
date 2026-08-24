@@ -291,7 +291,7 @@ class TradingDashboardApp {
                     symbol: this.symbol,
                     symbols: this._scannerSymbols(),
                     timeframes: this._scannerTimeframes,
-                    count: 100,
+                    count: 60,
                 }),
             });
             const data = await resp.json();
