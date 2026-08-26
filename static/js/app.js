@@ -83,12 +83,17 @@ class TradingDashboardApp {
         this.backtestBox = document.getElementById('backtestBox');
         this.exportCsv = document.getElementById('exportCsv');
         this.resetHistory = document.getElementById('resetHistory');
+        this.analysisBtn = document.getElementById('analysisBtn');
+        this.analysisRefreshBtn = document.getElementById('analysisRefreshBtn');
+        this.analysisModalEl = document.getElementById('analysisModal');
 
         this._bindEvents();
         this._loadInitialData();
-        // Server-side auto-trader: sync config now and poll its activity.
-        this._syncAutoConfig();
         this._lastAutoActivity = undefined;
+        // Reflect the server's PERSISTED auto-trader state on the toggles FIRST,
+        // then push — otherwise a page reload would re-enable a bot that the
+        // user paused (e.g. via Close All) before the status poll corrects it.
+        Promise.resolve(this._pollAutoStatus()).then(() => this._syncAutoConfig());
         this._autoStatusTimer = setInterval(() => this._pollAutoStatus(), 10000);
     }
 
@@ -176,6 +181,8 @@ class TradingDashboardApp {
         if (this.runBacktest) this.runBacktest.addEventListener('click', () => this._runBacktest());
         if (this.exportCsv) this.exportCsv.addEventListener('click', () => this._exportCsv());
         if (this.resetHistory) this.resetHistory.addEventListener('click', () => this._resetHistory());
+        if (this.analysisBtn) this.analysisBtn.addEventListener('click', () => this._openAnalysis());
+        if (this.analysisRefreshBtn) this.analysisRefreshBtn.addEventListener('click', () => this._loadAnalysis());
     }
 
     _updateAutoMode() {
@@ -194,9 +201,11 @@ class TradingDashboardApp {
      */
     async _syncAutoConfig() {
         const stake = parseFloat((document.getElementById('tradeLotSize') || {}).value) || 1;
+        // 0 is a valid min strength (open at EVERY signal), so don't fall back to 50.
+        const minStr = parseFloat(this.autoTradeStrength && this.autoTradeStrength.value);
         const body = {
             enabled: !!(this.autoTradeToggle && this.autoTradeToggle.checked),
-            min_strength: parseFloat(this.autoTradeStrength && this.autoTradeStrength.value) || 30,
+            min_strength: Number.isNaN(minStr) ? 0 : minStr,
             paper: !!(this.autoTradePaper && this.autoTradePaper.checked),
             exit_on_reversal: !!(this.autoExitReversal && this.autoExitReversal.checked),
             stake: stake,
@@ -223,6 +232,10 @@ class TradingDashboardApp {
                 if (this.autoTradeToggle) this.autoTradeToggle.checked = !!data.config.enabled;
                 if (this.autoExitReversal) this.autoExitReversal.checked = !!data.config.exit_on_reversal;
                 if (this.autoTradePaper) this.autoTradePaper.checked = !!data.config.paper;
+                if (this.autoTradeStrength && typeof data.config.min_strength === 'number') {
+                    this.autoTradeStrength.value = data.config.min_strength;
+                    if (this.autoStrengthVal) this.autoStrengthVal.textContent = data.config.min_strength;
+                }
                 this._updateAutoMode();
             }
             const at = data.at || 0;
@@ -263,7 +276,9 @@ class TradingDashboardApp {
     _startScanner() {
         if (this._scannerTimer) clearInterval(this._scannerTimer);
         this._runScanner();
-        this._scannerTimer = setInterval(() => this._runScanner(), 40000);
+        // 60s (was 40s): each scan fetches ~70 candle sets; a slower cadence
+        // keeps Deriv happy on Render where refreshes were timing out.
+        this._scannerTimer = setInterval(() => this._runScanner(), 60000);
     }
 
     _stopScanner() {
@@ -868,7 +883,7 @@ class TradingDashboardApp {
                 this._scannerSignals = [];
                 this._autoTradeNotified = {};
                 if (this.historyBody) {
-                    this.historyBody.innerHTML = '<tr class="history-empty"><td colspan="9"><i class="bi bi-journal-x"></i>Fresh start — no trades yet.</td></tr>';
+                    this.historyBody.innerHTML = '<tr class="history-empty"><td colspan="11"><i class="bi bi-journal-x"></i>Fresh start — no trades yet.</td></tr>';
                 }
                 if (this.positionsBody) {
                     this.positionsBody.innerHTML = '<div class="positions-empty"><i class="bi bi-briefcase"></i>No open positions.</div>';
@@ -885,12 +900,26 @@ class TradingDashboardApp {
     }
 
     /**
-     * Export the current trading history as a CSV download.
+     * Export trading history as a CSV download.
+     *
+     * Fetches the FULL history from /api/history/export (all settled
+     * transactions, paged, plus open positions) so the download is never
+     * limited to the rows currently rendered on screen, and includes the
+     * timeframe and signal strength the trade was opened with.
      */
-    _exportCsv() {
-        const rows = this._historyRows || [];
+    async _exportCsv() {
+        let rows = [];
+        try {
+            const resp = await fetch('/api/history/export');
+            const data = await resp.json();
+            if (data.success && Array.isArray(data.history)) rows = data.history;
+        } catch (err) {
+            // fall through to the rendered rows below
+        }
+        // Fallback to whatever is currently rendered if the export call failed.
+        if (!rows.length) rows = this._historyRows || [];
         if (!rows.length) { this._notify('Export', 'No history to export yet.'); return; }
-        const head = ['Time', 'Instrument', 'Type', 'Contract ID', 'Lot Size', 'SL ($)', 'TP ($)', 'Profit/Loss', 'Result'];
+        const head = ['Time', 'Instrument', 'Type', 'Timeframe', 'Signal Strength', 'Contract ID', 'Lot Size', 'SL ($)', 'TP ($)', 'Profit/Loss', 'Result'];
         const cell = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
         const lines = [head.join(',')];
         rows.forEach(r => {
@@ -900,7 +929,9 @@ class TradingDashboardApp {
             const profit = r.status === 'open' ? '' : (r.profit ?? 0).toFixed(2);
             const status = { won: 'Won', lost: 'Lost', open: 'Open' }[r.status] || r.status || '';
             const lot = Number(r.lot_size ?? r.stake ?? 0).toFixed(3);
-            lines.push([time, r.symbol || '', r.contract_type || '', r.contract_id || '', lot, sl, tp, profit, status].map(cell).join(','));
+            const tf = r.timeframe || '';
+            const sig = r.signal_strength != null && r.signal_strength !== '' ? `${r.signal_strength}%` : '';
+            lines.push([time, r.symbol || '', r.contract_type || '', tf, sig, r.contract_id || '', lot, sl, tp, profit, status].map(cell).join(','));
         });
         const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
         const a = document.createElement('a');
@@ -911,6 +942,93 @@ class TradingDashboardApp {
         a.remove();
         URL.revokeObjectURL(a.href);
         this._notify('Export', `Exported ${rows.length} trades to CSV`);
+    }
+
+    /**
+     * Open the Winning Analysis modal and load the latest summary.
+     */
+    _openAnalysis() {
+        if (this.analysisModalEl && window.bootstrap) {
+            const modal = bootstrap.Modal.getOrCreateInstance(this.analysisModalEl);
+            modal.show();
+        }
+        this._loadAnalysis();
+    }
+
+    /**
+     * Fetch win/loss analytics (by instrument, signal range, timeframe, and
+     * best symbol×timeframe×signal setups) and render them in the modal.
+     */
+    async _loadAnalysis() {
+        const setKpi = (id, val, cls) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = val;
+            el.className = cls || '';
+        };
+        try {
+            const resp = await fetch('/api/analysis');
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error || 'Could not load analysis');
+            const net = data.net_profit ?? 0;
+            setKpi('anSettled', data.settled);
+            setKpi('anWins', data.wins, 'pos');
+            setKpi('anLosses', data.losses, 'neg');
+            setKpi('anWinRate', (data.win_rate ?? 0).toFixed(1) + '%', data.win_rate >= 50 ? 'pos' : 'neg');
+            setKpi('anNet', (net >= 0 ? '+' : '') + '$' + net.toFixed(2), net >= 0 ? 'pos' : 'neg');
+            this._renderAnalysisTable('anByInstrument', data.by_instrument || []);
+            this._renderAnalysisTable('anBySignal', data.by_signal_range || []);
+            this._renderAnalysisTable('anByTimeframe', data.by_timeframe || []);
+            this._renderBestSetups(data.best_setups || []);
+        } catch (err) {
+            const msg = '<tr class="history-empty"><td colspan="7">' + String(err && err.message || err) + '</td></tr>';
+            ['anBestSetups', 'anByInstrument', 'anBySignal', 'anByTimeframe'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = msg;
+            });
+        }
+    }
+
+    _renderAnalysisTable(id, rows) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (!rows.length) {
+            el.innerHTML = '<tr class="history-empty"><td colspan="5">No settled trades in this view yet.</td></tr>';
+            return;
+        }
+        el.innerHTML = rows.map(r => {
+            const wr = r.win_rate.toFixed(1) + '%';
+            const net = (r.net_profit >= 0 ? '+' : '') + '$' + r.net_profit.toFixed(2);
+            return `<tr>
+                <td>${r.key}</td>
+                <td>${r.wins}</td>
+                <td>${r.losses}</td>
+                <td><span class="${r.win_rate >= 50 ? 'pos' : 'neg'}">${wr}</span></td>
+                <td><span class="${r.net_profit >= 0 ? 'pos' : 'neg'}">${net}</span></td>
+            </tr>`;
+        }).join('');
+    }
+
+    _renderBestSetups(rows) {
+        const el = document.getElementById('anBestSetups');
+        if (!el) return;
+        if (!rows.length) {
+            el.innerHTML = '<tr class="history-empty"><td colspan="7">Need ≥3 settled trades with symbol + timeframe + signal strength recorded.</td></tr>';
+            return;
+        }
+        el.innerHTML = rows.map(r => {
+            const wr = r.win_rate.toFixed(1) + '%';
+            const net = (r.net_profit >= 0 ? '+' : '') + '$' + r.net_profit.toFixed(2);
+            return `<tr>
+                <td>${r.symbol}</td>
+                <td>${r.timeframe}</td>
+                <td>${r.signal_range}</td>
+                <td>${r.wins}</td>
+                <td>${r.losses}</td>
+                <td><span class="${r.win_rate >= 50 ? 'pos' : 'neg'}">${wr}</span></td>
+                <td><span class="${r.net_profit >= 0 ? 'pos' : 'neg'}">${net}</span></td>
+            </tr>`;
+        }).join('');
     }
 
     /**
@@ -997,13 +1115,15 @@ class TradingDashboardApp {
         this._updatePerformance(this._historyRows);
         if (!rows || !rows.length) {
             this.historyBody.innerHTML =
-                '<tr class="history-empty"><td colspan="9"><i class="bi bi-journal-x"></i>No trades yet.</td></tr>';
+                '<tr class="history-empty"><td colspan="11"><i class="bi bi-journal-x"></i>No trades yet.</td></tr>';
             return;
         }
         this.historyBody.innerHTML = rows.map(r => {
             const time = r.time ? new Date(r.time * 1000).toLocaleString() : '--';
             const symbol = r.symbol || '--';
             const type = r.contract_type || '--';
+            const timeframe = r.timeframe || '—';
+            const signal = r.signal_strength != null && r.signal_strength !== '' ? `${r.signal_strength}%` : '—';
             const lot = Number(r.lot_size ?? r.stake ?? 0);
             const isOpen = r.status === 'open';
             const status = ['won', 'lost', 'open'].includes(r.status) ? r.status : 'open';
@@ -1023,6 +1143,8 @@ class TradingDashboardApp {
                 <td>${time}</td>
                 <td>${symbol}</td>
                 <td>${type}</td>
+                <td>${timeframe}</td>
+                <td>${signal}</td>
                 <td>${r.contract_id ?? '--'}</td>
                 <td>${lot.toFixed(3)}</td>
                 <td>${sl}</td>
@@ -1042,7 +1164,7 @@ class TradingDashboardApp {
     _clearHistory() {
         if (this.historyBody) {
             this.historyBody.innerHTML =
-                '<tr class="history-empty"><td colspan="9"><i class="bi bi-plug"></i>Connect to your account to view trading history.</td></tr>';
+                '<tr class="history-empty"><td colspan="11"><i class="bi bi-plug"></i>Connect to your account to view trading history.</td></tr>';
         }
     }
 
@@ -1145,22 +1267,28 @@ class TradingDashboardApp {
      * Close every open position at once.
      */
     async _closeAllPositions() {
-        if (!confirm('Close ALL open positions?')) return;
+        if (!confirm('Close ALL open positions?\n\nAuto-trade will be paused so the bot does not re-open new positions.')) return;
         const btn = document.getElementById('closeAllPositions');
         if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-x-circle"></i> Closing…'; }
+        // Guard against a hung request so the button always re-enables.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 25000);
         try {
-            const resp = await fetch('/api/close_all', { method: 'POST' });
+            const resp = await fetch('/api/close_all', { method: 'POST', signal: ctrl.signal });
             const data = await resp.json();
             if (data.success) {
-                this._notify('Closed All', `Closed ${data.closed} open position(s)`);
+                const paused = data.auto_trader_paused ? ' · Auto-trade paused' : '';
+                this._notify('Closed All', `Closed ${data.closed} open position(s)` + paused);
+                if (this.autoTradeToggle) this.autoTradeToggle.checked = false;
                 this._loadPositions();
                 this._loadHistory();
             } else {
                 this._notify('Close Failed', data.error || 'Could not close positions');
             }
         } catch (err) {
-            this._notify('Close Error', String(err));
+            this._notify('Close Error', err && err.name === 'AbortError' ? 'Close All timed out' : String(err));
         } finally {
+            clearTimeout(timer);
             if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-x-circle"></i> Close All'; }
         }
     }

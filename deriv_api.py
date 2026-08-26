@@ -320,11 +320,20 @@ class DerivAPI:
         req = {"portfolio": 1}
         return await self._send_request(req)
 
-    async def get_profit_table(self):
-        """Get profit/loss history."""
+    async def get_profit_table(self, limit=None, offset=None):
+        """Get profit/loss history.
+
+        `limit` (max 100) and `offset` enable pagination so callers can fetch
+        the FULL history page-by-page (Deriv returns only a recent slice by
+        default otherwise).
+        """
         if not self._authenticated:
             raise PermissionError("Not authenticated.")
         req = {"profit_table": 1}
+        if limit is not None:
+            req["limit"] = int(limit)
+        if offset is not None:
+            req["offset"] = int(offset)
         return await self._send_request(req)
 
     async def get_balance(self):
@@ -423,28 +432,44 @@ class SharedDerivConnection:
     rapid reconnects). Reconnects automatically if the socket drops or the token changes.
     """
 
-    def __init__(self, app_id: str, account_type: str = "demo"):
+    def __init__(self, app_id: str, account_type: str = "demo", public: bool = False):
         self.app_id = app_id
         self.account_type = account_type
+        self.public = public  # True = public market-data WS (no token/OTP auth)
         self._token = None
         self._api = None
         self._reconnect_lock = None   # asyncio.Lock, created once the loop is running
         self._loop = None
         self._loop_ready = threading.Event()
+        self._start_lock = threading.Lock()
 
     # ---- lifecycle ----------------------------------------------------
     def start(self):
+        # Thread-safe + idempotent: several threads may call start() at boot
+        # (warm-cache thread, request threads, AutoTrader). Without the lock,
+        # two threads can both see self._loop is None and start TWO threads on
+        # the same loop -> Windows asyncio asserts "_self_reading_future is
+        # None" in run_forever() (Python 3.14) and the thread dies.
         if self._loop is not None:
             return
-        self._loop = asyncio.new_event_loop()
-        threading.Thread(target=self._run, daemon=True, name="deriv-shared-conn").start()
-        self._loop_ready.wait(timeout=10)
+        with self._start_lock:
+            if self._loop is not None:
+                return
+            self._loop = asyncio.new_event_loop()
+            threading.Thread(target=self._run, daemon=True,
+                             name="deriv-" + ("public" if self.public else "shared") + "-conn").start()
+            self._loop_ready.wait(timeout=10)
 
     def _run(self):
-        asyncio.set_event_loop(self._loop)
-        self._reconnect_lock = asyncio.Lock()
-        self._loop_ready.set()
-        self._loop.run_forever()
+        try:
+            asyncio.set_event_loop(self._loop)
+            self._reconnect_lock = asyncio.Lock()
+            self._loop_ready.set()
+            self._loop.run_forever()
+        except Exception:
+            logger.exception("Deriv connection loop thread crashed")
+        finally:
+            self._loop_ready.set()
 
     # ---- thread-safe entry point --------------------------------------
     def call(self, coro_factory, token: str = "", timeout: float = 45.0):
@@ -487,8 +512,11 @@ class SharedDerivConnection:
                 pass
             self._api = None
             api = DerivAPI(app_id=self.app_id, api_token=token, account_type=self.account_type)
-            await asyncio.wait_for(api.connect(authenticated=True, timeout=45), timeout=55)
+            await asyncio.wait_for(
+                api.connect(authenticated=not self.public, timeout=45), timeout=55
+            )
             self._api = api
             self._token = token
-            logger.info("Shared Deriv connection established (type=%s)", self.account_type)
+            logger.info("Shared Deriv connection established (type=%s%s)",
+                        self.account_type, " public" if self.public else "")
             return api

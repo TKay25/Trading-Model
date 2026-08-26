@@ -82,7 +82,10 @@ auto_trader: AutoTrader = None
 # them here to enrich the history and positions views. Persisted to a small
 # JSON file so the enrichment survives server restarts.
 trade_ledger = {}
-MAX_LEDGER = 500
+# Keep more history enriched (Instrument/Type/Timeframe/Signal). 500 was too
+# small once auto-trading ran for a while; 5000 keeps ~10x more trades without
+# making the JSON ledger (or each save) unwieldy.
+MAX_LEDGER = 5000
 LEDGER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_ledger.json")
 
 
@@ -114,11 +117,14 @@ def _save_ledger():
 
 
 def _record_trade_ledger(contract_id, symbol, contract_type, lot_size, multiplier,
-                         stop_loss, take_profit):
+                         stop_loss, take_profit, timeframe=None, signal_strength=None):
     """Record a trade in the in-app ledger (history/positions enrichment).
 
     Deriv's profit_table/portfolio omit symbol, lot size, multiplier and SL/TP,
     so we keep them here. Used by both /api/trade and the server-side AutoTrader.
+    `timeframe` is the signal timeframe the AutoTrader opened on (used by the
+    same-timeframe reversal exit). `signal_strength` is the reversal strength (%)
+    the AutoTrader saw when it opened the trade (0-100); None for manual trades.
     """
     trade_ledger[int(contract_id)] = {
         "symbol": symbol,
@@ -127,6 +133,8 @@ def _record_trade_ledger(contract_id, symbol, contract_type, lot_size, multiplie
         "multiplier": multiplier,
         "stop_loss": stop_loss,
         "take_profit": take_profit,
+        "timeframe": timeframe,
+        "signal_strength": signal_strength,
     }
     if len(trade_ledger) > MAX_LEDGER:
         for _cid in list(trade_ledger)[: len(trade_ledger) - MAX_LEDGER]:
@@ -171,6 +179,7 @@ def init_services():
                 req, _get_valid_multipliers(sym) or []),
             record_trade=_record_trade_ledger,
             position_monitor=position_monitor,
+            ledger=trade_ledger,
             symbols=Config.VOLATILITY_INDICES.keys(),
             timeframes=Config.TIMEFRAMES,
             app_id=Config.DERIV_APP_ID,
@@ -180,15 +189,55 @@ def init_services():
         auto_trader.start()
 
 
+_shared_conn_lock = threading.Lock()
+
+
 def _get_shared_conn():
     global _shared_conn
     if _shared_conn is None:
-        _shared_conn = SharedDerivConnection(
-            app_id=Config.DERIV_APP_ID,
-            account_type=Config.DERIV_ACCOUNT_TYPE,
-        )
-        _shared_conn.start()
+        with _shared_conn_lock:
+            if _shared_conn is None:
+                _shared_conn = SharedDerivConnection(
+                    app_id=Config.DERIV_APP_ID,
+                    account_type=Config.DERIV_ACCOUNT_TYPE,
+                )
+                _shared_conn.start()
     return _shared_conn
+
+
+_public_conn: SharedDerivConnection = None
+_public_conn_lock = threading.Lock()
+
+
+def _get_public_conn():
+    """A dedicated PUBLIC Deriv connection for heavy market-data fetches
+    (chart candles + the multi-market scanner).
+
+    Market data needs no auth/OTP, and putting it on its own connection means a
+    70-request scanner burst can never queue behind account operations on the
+    shared connection — which is what caused the "Deriv request timed out after
+    45s" 500s on page refresh from Render's datacenter.
+    """
+    global _public_conn
+    if _public_conn is None:
+        with _public_conn_lock:
+            if _public_conn is None:
+                _public_conn = SharedDerivConnection(
+                    app_id=Config.DERIV_APP_ID,
+                    account_type=Config.DERIV_ACCOUNT_TYPE,
+                    public=True,
+                )
+                _public_conn.start()
+    return _public_conn
+
+
+def _public_deriv_call(coro_factory, timeout=45):
+    """Run a market-data coroutine over the dedicated PUBLIC connection."""
+    try:
+        return _get_public_conn().call(coro_factory, token="", timeout=timeout)
+    except (asyncio.TimeoutError, TimeoutError):
+        logger.error("Deriv public request timed out after %ss", timeout)
+        raise TimeoutError(f"Deriv public request timed out after {timeout}s")
 
 
 def _session_token():
@@ -263,8 +312,9 @@ def _get_valid_multipliers(symbol):
     try:
         async def _fetch(api):
             return await api.get_valid_multipliers(symbol)
-        # contracts_for works on the public WS — no OTP, so a cache miss is fast.
-        values = _deriv_call(_fetch, authenticated=False, timeout=15)
+        # contracts_for is public market data — use the PUBLIC connection so a
+        # cache miss never contends with account requests on the shared conn.
+        values = _public_deriv_call(_fetch, timeout=15)
         if isinstance(values, list) and values:
             _VALID_MULTIPLIERS[symbol] = values
             return values
@@ -477,7 +527,9 @@ def get_candles():
         return await api.get_candles(symbol, granularity, count)
 
     try:
-        result = _deriv_call(_fetch)
+        # Candles are public market data — run on the dedicated PUBLIC connection
+        # so chart loads never contend with account requests.
+        result = _public_deriv_call(_fetch)
 
         if "candles" in result:
             candles = result["candles"]
@@ -533,8 +585,9 @@ def scanner():
     try:
         # The scanner is display-only now (the server-side AutoTrader trades), so
         # give it a generous timeout — from Render's datacenter a 70-request scan
-        # can be slow and must never 500 the page.
-        results = _deriv_call(_scan, timeout=90)
+        # can be slow. It runs on a dedicated PUBLIC connection so it never
+        # queues behind account requests on the shared connection.
+        results = _public_deriv_call(_scan, timeout=90)
         return jsonify({"success": True, "symbol": symbol, "symbols": syms, "results": results})
     except Exception as e:
         logger.error(f"Error in scanner: {e}")
@@ -718,30 +771,50 @@ def sell_contract():
 
 @app.route("/api/close_all", methods=["POST"])
 def close_all_positions():
-    """Sell/close EVERY open position in one request."""
+    """Sell/close EVERY open position in one request (concurrently)."""
     if not Config.DERIV_API_TOKEN:
         return jsonify({"success": False, "error": "No API token configured"}), 400
+
+    # Pause the server-side AutoTrader FIRST so it can't re-open positions while
+    # (or right after) we close everything — otherwise "Close All" looks broken
+    # because the bot re-opens trades within seconds.
+    auto_trader_paused = False
+    if auto_trader is not None:
+        auto_trader.update_config(enabled=False)
+        auto_trader_paused = True
 
     async def _close_all(api):
         port = await api.get_portfolio()
         pt = port.get("portfolio", {}) if isinstance(port, dict) else {}
         contracts = pt.get("contracts", []) if isinstance(pt, dict) else []
-        closed = 0
-        for c in contracts:
-            cid = c.get("contract_id")
-            if not cid:
-                continue
-            try:
-                await api.sell_contract(cid)
-                closed += 1
-            except Exception:
-                continue
-        return closed
+        cids = [c.get("contract_id") for c in contracts if c.get("contract_id")]
+        # Sell every contract CONCURRENTLY over the one connection (req_id
+        # multiplexing) — far faster than 40 sequential round-trips.
+        outs = await asyncio.gather(
+            *(api.sell_contract(cid) for cid in cids), return_exceptions=True)
+        closed, failed = [], []
+        for cid, o in zip(cids, outs):
+            if isinstance(o, Exception):
+                failed.append((cid, str(o)))
+            elif isinstance(o, dict) and "sell" in o and "error" not in o:
+                closed.append(cid)
+            else:
+                # Deriv returned an error WITHOUT raising — must not count as closed
+                msg = ""
+                if isinstance(o, dict):
+                    e = o.get("error") or {}
+                    msg = e.get("message") if isinstance(e, dict) else str(o)
+                failed.append((cid, msg or str(o)))
+        if failed:
+            logger.warning("close_all: %d/%d sells failed (sample %s)",
+                           len(failed), len(cids), failed[:5])
+        return closed, failed
 
     try:
-        closed = _deriv_call(_close_all, authenticated=True)
+        closed, failed = _deriv_call(_close_all, authenticated=True, timeout=60)
         position_monitor.untrack_all()
-        return jsonify({"success": True, "closed": closed})
+        return jsonify({"success": True, "closed": len(closed), "failed": len(failed),
+                        "auto_trader_paused": auto_trader_paused})
     except Exception as e:
         logger.error(f"Error closing all positions: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -819,18 +892,26 @@ def get_positions():
         port = await api.get_portfolio()
         pt = port.get("portfolio", {}) if isinstance(port, dict) else {}
         contracts = pt.get("contracts", []) if isinstance(pt, dict) else []
-        for c in contracts:
-            cid = c.get("contract_id")
-            if not cid:
-                continue
-            try:
-                poc = await api._send_request({"proposal_open_contract": 1, "contract_id": int(cid)})
-                poc_data = (poc or {}).get("proposal_open_contract") or {}
-                if isinstance(poc_data, dict):
-                    c["_profit"] = _num(poc_data.get("profit"))
-                    c["_sellable"] = poc_data.get("is_valid_to_sell")
-            except Exception:
-                pass
+        # Fetch each open contract's live P/L CONCURRENTLY (bounded by a
+        # semaphore). Sequential per-contract calls took ~50s with many open
+        # positions — that lag made page refreshes feel broken on Render.
+        sem = asyncio.Semaphore(10)
+
+        async def _pl(c):
+            async with sem:
+                cid = c.get("contract_id")
+                if not cid:
+                    return
+                try:
+                    poc = await api._send_request({"proposal_open_contract": 1, "contract_id": int(cid)})
+                    poc_data = (poc or {}).get("proposal_open_contract") or {}
+                    if isinstance(poc_data, dict):
+                        c["_profit"] = _num(poc_data.get("profit"))
+                        c["_sellable"] = poc_data.get("is_valid_to_sell")
+                except Exception:
+                    pass
+
+        await asyncio.gather(*(_pl(c) for c in contracts), return_exceptions=True)
         return contracts
 
     try:
@@ -911,12 +992,98 @@ def get_portfolio():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+def _build_history(pt_payload, port_payload, cutoff=0):
+    """Build normalized trading-history rows from raw Deriv responses.
+
+    Both the profit_table (settled) and portfolio (open) payloads are enriched
+    with symbol, lot size, SL/TP, timeframe and signal strength from the in-app
+    trade ledger, because Deriv's profit_table/portfolio do not carry those
+    fields. Used by /api/history and /api/history/export (full CSV download).
+    """
+    txns = pt_payload.get("transactions", []) if isinstance(pt_payload, dict) else []
+    contracts = port_payload.get("contracts", []) if isinstance(port_payload, dict) else []
+
+    history = []
+    open_ids = set()
+
+    # 1) Live (open) trades first, so open positions appear immediately.
+    for c in contracts:
+        try:
+            if cutoff and (c.get("purchase_time") or 0) < cutoff:
+                continue
+            cid = c.get("contract_id")
+            if cid is not None:
+                open_ids.add(cid)
+            info = trade_ledger.get(cid, {})
+            buy_price = float(c.get("buy_price", 0))
+            history.append({
+                "time": c.get("purchase_time"),
+                "contract_id": cid,
+                "symbol": info.get("symbol") or c.get("underlying_symbol"),
+                "contract_type": info.get("contract_type") or c.get("contract_type"),
+                "lot_size": info.get("lot_size", buy_price),
+                "stop_loss": info.get("stop_loss", 0),
+                "take_profit": info.get("take_profit", 0),
+                "timeframe": info.get("timeframe"),
+                "signal_strength": info.get("signal_strength"),
+                "stake": buy_price,
+                "payout": float(c.get("payout", 0)),
+                "profit": None,  # unrealized for open positions
+                "status": "open",
+            })
+        except (TypeError, ValueError):
+            continue
+
+    # 2) Settled trades from profit_table (skip any still-open duplicates).
+    for t in txns:
+        try:
+            if cutoff and (t.get("purchase_time") or 0) < cutoff:
+                continue
+            cid = t.get("contract_id")
+            if cid in open_ids:
+                continue
+            info = trade_ledger.get(cid, {})
+            buy_price = float(t.get("buy_price", 0))
+            payout = float(t.get("payout", 0))
+            sell_price = float(t.get("sell_price", 0))
+            profit = round(sell_price - buy_price, 2)
+            if not t.get("sell_time"):
+                status = "open"
+            elif profit >= 0:
+                status = "won"
+            else:
+                status = "lost"
+            history.append({
+                "time": t.get("purchase_time"),
+                "contract_id": cid,
+                "transaction_id": t.get("transaction_id"),
+                "symbol": info.get("symbol"),
+                "contract_type": info.get("contract_type"),
+                "lot_size": info.get("lot_size", buy_price),
+                "stop_loss": info.get("stop_loss", 0),
+                "take_profit": info.get("take_profit", 0),
+                "timeframe": info.get("timeframe"),
+                "signal_strength": info.get("signal_strength"),
+                "stake": buy_price,
+                "payout": payout,
+                "sell_price": sell_price,
+                "profit": profit,
+                "status": status,
+            })
+        except (TypeError, ValueError):
+            continue
+
+    history.sort(key=lambda h: h["time"] or 0, reverse=True)
+    return history
+
+
 @app.route("/api/history")
 def get_history():
     """Get trading history: live (open) positions + settled contracts.
 
-    Both are enriched with symbol, lot size and SL/TP from the in-app trade
-    ledger, because Deriv's profit_table/portfolio do not carry those fields.
+    Both are enriched with symbol, lot size, SL/TP, timeframe and signal
+    strength from the in-app trade ledger, because Deriv's profit_table/
+    portfolio do not carry those fields.
     """
     if not Config.DERIV_API_TOKEN:
         return jsonify({"success": False, "error": "No API token configured"}), 400
@@ -933,83 +1100,162 @@ def get_history():
         # the actual payload under its own key (profit_table / portfolio).
         pt = result.get("profit_table", {}) if isinstance(result, dict) else {}
         pt_payload = pt.get("profit_table", {}) if isinstance(pt, dict) else {}
-        txns = pt_payload.get("transactions", []) if isinstance(pt_payload, dict) else []
         port = result.get("portfolio", {}) if isinstance(result, dict) else {}
         port_payload = port.get("portfolio", {}) if isinstance(port, dict) else {}
-        contracts = port_payload.get("contracts", []) if isinstance(port_payload, dict) else []
-
-        history = []
-        open_ids = set()
-        cutoff = session.get("history_cutoff") or 0
-
-        # 1) Live (open) trades first, so open positions appear immediately.
-        for c in contracts:
-            try:
-                if cutoff and (c.get("purchase_time") or 0) < cutoff:
-                    continue
-                cid = c.get("contract_id")
-                if cid is not None:
-                    open_ids.add(cid)
-                info = trade_ledger.get(cid, {})
-                buy_price = float(c.get("buy_price", 0))
-                history.append({
-                    "time": c.get("purchase_time"),
-                    "contract_id": cid,
-                    "symbol": info.get("symbol") or c.get("underlying_symbol"),
-                    "contract_type": info.get("contract_type") or c.get("contract_type"),
-                    "lot_size": info.get("lot_size", buy_price),
-                    "stop_loss": info.get("stop_loss", 0),
-                    "take_profit": info.get("take_profit", 0),
-                    "stake": buy_price,
-                    "payout": float(c.get("payout", 0)),
-                    "profit": None,  # unrealized for open positions
-                    "status": "open",
-                })
-            except (TypeError, ValueError):
-                continue
-
-        # 2) Settled trades from profit_table (skip any still-open duplicates).
-        for t in txns:
-            try:
-                if cutoff and (t.get("purchase_time") or 0) < cutoff:
-                    continue
-                cid = t.get("contract_id")
-                if cid in open_ids:
-                    continue
-                info = trade_ledger.get(cid, {})
-                buy_price = float(t.get("buy_price", 0))
-                payout = float(t.get("payout", 0))
-                sell_price = float(t.get("sell_price", 0))
-                profit = round(sell_price - buy_price, 2)
-                if not t.get("sell_time"):
-                    status = "open"
-                elif profit >= 0:
-                    status = "won"
-                else:
-                    status = "lost"
-                history.append({
-                    "time": t.get("purchase_time"),
-                    "contract_id": cid,
-                    "transaction_id": t.get("transaction_id"),
-                    "symbol": info.get("symbol"),
-                    "contract_type": info.get("contract_type"),
-                    "lot_size": info.get("lot_size", buy_price),
-                    "stop_loss": info.get("stop_loss", 0),
-                    "take_profit": info.get("take_profit", 0),
-                    "stake": buy_price,
-                    "payout": payout,
-                    "sell_price": sell_price,
-                    "profit": profit,
-                    "status": status,
-                })
-            except (TypeError, ValueError):
-                continue
-
-        history.sort(key=lambda h: h["time"] or 0, reverse=True)
+        history = _build_history(pt_payload, port_payload, session.get("history_cutoff") or 0)
         return jsonify({"success": True, "history": history})
 
     except Exception as e:
         logger.error(f"Error fetching history: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+async def _fetch_full_history(api, page_size=100, max_pages=100):
+    """Page through ALL of Deriv's profit_table transactions + open positions.
+
+    Returns (pt_payload, port_payload) ready for _build_history(). Deriv only
+    returns a recent slice per call, so we loop with limit/offset.
+    """
+    offset = 0
+    all_txns = []
+    while True:
+        pt = await api.get_profit_table(limit=page_size, offset=offset)
+        pt_payload = pt.get("profit_table", {}) if isinstance(pt, dict) else {}
+        txns = pt_payload.get("transactions", []) if isinstance(pt_payload, dict) else []
+        all_txns.extend(txns)
+        if len(txns) < page_size:
+            break
+        offset += page_size
+        if offset > page_size * max_pages:  # safety cap
+            break
+    port = await api.get_portfolio()
+    port_payload = port.get("portfolio", {}) if isinstance(port, dict) else {}
+    return {"transactions": all_txns}, port_payload
+
+
+@app.route("/api/history/export")
+def export_history():
+    """Full trading history for the CSV download: ALL settled transactions
+    (paged through Deriv's profit_table, which otherwise returns only a recent
+    slice) plus open positions, enriched with timeframe and signal strength."""
+    if not Config.DERIV_API_TOKEN:
+        return jsonify({"success": False, "error": "No API token configured"}), 400
+
+    async def _fetch(api):
+        return await _fetch_full_history(api)
+
+    try:
+        pt_payload, port_payload = _deriv_call(_fetch, authenticated=True, timeout=120)
+        history = _build_history(pt_payload, port_payload, session.get("history_cutoff") or 0)
+        return jsonify({"success": True, "history": history})
+    except Exception as e:
+        logger.error(f"Error fetching full history for export: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+def _signal_bucket(strength):
+    """Bucket a 0-100 signal strength into a display range like '50-59%'."""
+    if strength is None:
+        return None
+    try:
+        s = float(strength)
+    except (TypeError, ValueError):
+        return None
+    if s < 0:
+        s = 0
+    b = int(s // 10)
+    if b >= 9:
+        return "90-100%"
+    return f"{b * 10}-{b * 10 + 9}%"
+
+
+def _stat(items):
+    wins = sum(1 for r in items if r.get("status") == "won")
+    total = len(items)
+    net = round(sum(float(r.get("profit") or 0) for r in items), 2)
+    return {
+        "wins": wins,
+        "losses": total - wins,
+        "total": total,
+        "win_rate": round(100.0 * wins / total, 1) if total else 0.0,
+        "net_profit": net,
+        "avg_profit": round(net / total, 2) if total else 0.0,
+    }
+
+
+def _group_stats(groups):
+    out = []
+    for key, items in groups.items():
+        row = _stat(items)
+        row["key"] = key
+        out.append(row)
+    out.sort(key=lambda g: (-g["win_rate"], -g["total"]))
+    return out
+
+
+def _compute_analysis(settled):
+    by_instrument = {}
+    by_timeframe = {}
+    by_signal = {}
+    combos = {}
+    for r in settled:
+        sym = r.get("symbol")
+        tf = r.get("timeframe")
+        sig = _signal_bucket(r.get("signal_strength"))
+        if sym:
+            by_instrument.setdefault(sym, []).append(r)
+        by_timeframe.setdefault(tf or "N/A", []).append(r)
+        if sig:
+            by_signal.setdefault(sig, []).append(r)
+        if sym and tf and sig:
+            combos.setdefault((sym, tf, sig), []).append(r)
+
+    best_setups = []
+    for (sym, tf, sig), items in combos.items():
+        row = _stat(items)
+        row.update({"symbol": sym, "timeframe": tf, "signal_range": sig})
+        best_setups.append(row)
+    # Only setups with a meaningful sample, ranked by win rate.
+    best_setups = [s for s in best_setups if s["total"] >= 3]
+    best_setups.sort(key=lambda s: (-s["win_rate"], -s["total"]))
+
+    total = len(settled)
+    wins = sum(1 for r in settled if r.get("status") == "won")
+    net = round(sum(float(r.get("profit") or 0) for r in settled), 2)
+    return {
+        "settled": total,
+        "wins": wins,
+        "losses": total - wins,
+        "win_rate": round(100.0 * wins / total, 1) if total else 0.0,
+        "net_profit": net,
+        "by_instrument": _group_stats(by_instrument),
+        "by_timeframe": _group_stats(by_timeframe),
+        "by_signal_range": _group_stats(by_signal),
+        "best_setups": best_setups[:15],
+    }
+
+
+@app.route("/api/analysis")
+def get_analysis():
+    """Win/loss analytics by instrument, timeframe and signal-strength range.
+
+    Uses ALL settled history (paged) so the user can see which setups win most
+    and sharpen the model (e.g. raise min_strength to the profitable range).
+    """
+    if not Config.DERIV_API_TOKEN:
+        return jsonify({"success": False, "error": "No API token configured"}), 400
+
+    async def _fetch(api):
+        return await _fetch_full_history(api)
+
+    try:
+        pt_payload, port_payload = _deriv_call(_fetch, authenticated=True, timeout=120)
+        rows = _build_history(pt_payload, port_payload, session.get("history_cutoff") or 0)
+        settled = [r for r in rows if r.get("status") in ("won", "lost")]
+        analysis = _compute_analysis(settled)
+        return jsonify({"success": True, **analysis})
+    except Exception as e:
+        logger.error(f"Error computing analysis: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 

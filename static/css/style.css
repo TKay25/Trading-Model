@@ -1521,6 +1521,21 @@ body {
 .backtest-stats b { color: var(--text); }
 .backtest-stats b.pos { color: var(--green-bright); }
 .backtest-stats b.neg { color: var(--red-bright); }
+
+/* Winning Analysis modal */
+.analysis-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.analysis-kpi { background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 8px 14px; font-size: 12px; color: var(--text-secondary); }
+.analysis-kpi b { color: var(--text); font-size: 15px; margin-left: 4px; }
+.analysis-kpi b.pos { color: var(--green-bright); }
+.analysis-kpi b.neg { color: var(--red-bright); }
+.analysis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.analysis-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+.analysis-panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); margin-bottom: 8px; }
+.analysis-table { font-size: 12px; }
+.analysis-table th, .analysis-table td { padding: 6px 10px; }
+.analysis-table .pos { color: var(--green-bright); font-weight: 700; }
+.analysis-table .neg { color: var(--red-bright); font-weight: 700; }
+@media (max-width: 992px) { .analysis-grid { grid-template-columns: 1fr; } }
 .backtest-err { color: var(--red-bright); font-size: 12px; }
 
 @media (max-width: 700px) {

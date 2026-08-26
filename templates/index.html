@@ -222,13 +222,13 @@
                             <span class="switch"></span>
                             <span class="auto-label"><i class="bi bi-robot"></i> Auto-trade</span>
                         </label>
-                        <label class="auto-min">Min <span id="autoStrengthVal">30</span>%</label>
+                        <label class="auto-min">Min <span id="autoStrengthVal">0</span>%</label>
                         <label class="switch-label auto-paper"><input type="checkbox" id="autoTradePaper"> <span>Paper</span></label>
                         <label class="switch-label auto-paper" title="Close a position when TDI + M/W + candlestick signals flip against it"><input type="checkbox" id="autoExitReversal" checked> <span>Exit on rev.</span></label>
                         <span id="autoModeBadge" class="auto-mode-badge live">LIVE</span>
-                        <input type="range" id="autoTradeStrength" min="10" max="100" value="30" step="5" class="auto-range">
+                        <input type="range" id="autoTradeStrength" min="0" max="100" value="0" step="5" class="auto-range">
                     </div>
-                    <p class="sl-tp-hint auto-hint">Server-side auto-trading: 5m/15m/30m reversal signals ≥30% · Multiple positions per symbol (no hedging) · No fixed SL/TP — exits on opposite reversal · Works with the page closed.</p>
+                    <p class="sl-tp-hint auto-hint">Server-side auto-trading: all timeframes reversal signals ≥0% (every strength) · Multiple positions per symbol (no hedging) · No fixed SL/TP — exits on opposite reversal (same timeframe) · Works with the page closed.</p>
                 </div>
                 <div id="tradeStatus" class="trade-status d-none"></div>
             </div>
@@ -272,6 +272,8 @@
                     <th>Time</th>
                     <th>Instrument</th>
                     <th>Type</th>
+                    <th>Timeframe</th>
+                    <th>Signal</th>
                     <th>Contract ID</th>
                     <th>Lot Size</th>
                     <th>SL ($)</th>
@@ -281,7 +283,7 @@
                 </tr>
             </thead>
             <tbody id="historyBody">
-                <tr class="history-empty"><td colspan="9">Connect to your account to view trading history.</td></tr>
+                <tr class="history-empty"><td colspan="11">Connect to your account to view trading history.</td></tr>
             </tbody>
         </table>
     </div>
@@ -311,9 +313,14 @@
 <div class="history-section">
     <div class="history-header">
         <span class="history-title"><i class="bi bi-graph-up"></i> Performance</span>
-        <button id="runBacktest" class="toolbar-btn" title="Run signal backtest on the open symbol/timeframe">
-            <i class="bi bi-cpu"></i> Backtest
-        </button>
+        <div class="history-actions">
+            <button id="analysisBtn" class="toolbar-btn" title="Which instruments / timeframes / signal-strength ranges win most">
+                <i class="bi bi-bar-chart-line"></i> Winning Analysis
+            </button>
+            <button id="runBacktest" class="toolbar-btn" title="Run signal backtest on the open symbol/timeframe">
+                <i class="bi bi-cpu"></i> Backtest
+            </button>
+        </div>
     </div>
     <div class="perf-grid">
         <div class="perf-tile"><span class="perf-label">Trades</span><span class="perf-value" id="perfTrades">--</span></div>
@@ -329,6 +336,68 @@
     </div>
     <canvas id="equityCanvas" class="equity-canvas" height="150"></canvas>
     <div id="backtestBox" class="backtest-box d-none"></div>
+</div>
+
+<!-- Winning Analysis Modal -->
+<div class="modal fade" id="analysisModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-bar-chart-line"></i> Winning Analysis</h5>
+                <div class="ms-auto me-2">
+                    <button type="button" class="toolbar-btn" id="analysisRefreshBtn" title="Refresh analysis from the latest history">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="analysisSummary" class="analysis-summary">
+                    <span class="analysis-kpi">Settled trades: <b id="anSettled">--</b></span>
+                    <span class="analysis-kpi">Wins: <b id="anWins" class="pos">--</b></span>
+                    <span class="analysis-kpi">Losses: <b id="anLosses" class="neg">--</b></span>
+                    <span class="analysis-kpi">Win rate: <b id="anWinRate">--</b></span>
+                    <span class="analysis-kpi">Net P/L: <b id="anNet">--</b></span>
+                </div>
+                <div class="analysis-grid">
+                    <div class="analysis-panel">
+                        <div class="analysis-panel-title">Best Setups <small>(symbol × timeframe × signal)</small></div>
+                        <table class="history-table analysis-table">
+                            <thead><tr><th>Instrument</th><th>Timeframe</th><th>Signal</th><th>Wins</th><th>Losses</th><th>Win Rate</th><th>Net P/L</th></tr></thead>
+                            <tbody id="anBestSetups"></tbody>
+                        </table>
+                    </div>
+                    <div class="analysis-panel">
+                        <div class="analysis-panel-title">By Instrument</div>
+                        <table class="history-table analysis-table">
+                            <thead><tr><th>Instrument</th><th>Wins</th><th>Losses</th><th>Win Rate</th><th>Net P/L</th></tr></thead>
+                            <tbody id="anByInstrument"></tbody>
+                        </table>
+                    </div>
+                    <div class="analysis-panel">
+                        <div class="analysis-panel-title">By Signal Strength</div>
+                        <table class="history-table analysis-table">
+                            <thead><tr><th>Signal Range</th><th>Wins</th><th>Losses</th><th>Win Rate</th><th>Net P/L</th></tr></thead>
+                            <tbody id="anBySignal"></tbody>
+                        </table>
+                    </div>
+                    <div class="analysis-panel">
+                        <div class="analysis-panel-title">By Timeframe</div>
+                        <table class="history-table analysis-table">
+                            <thead><tr><th>Timeframe</th><th>Wins</th><th>Losses</th><th>Win Rate</th><th>Net P/L</th></tr></thead>
+                            <tbody id="anByTimeframe"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <p class="sl-tp-hint mt-2 mb-0">
+                    <i class="bi bi-info-circle"></i>
+                    Shows settled trades with full metadata (opened through this app). Timeframe &amp; Signal
+                    Strength are recorded for auto-trades. With min strength at <b>0%</b>, trades open at every
+                    strength so each signal range builds up samples — then raise min strength to the winning range.
+                </p>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Token Input Modal -->
