@@ -4,7 +4,10 @@ services:
     runtime: python
     repo: https://github.com/yourusername/your-repo-name
     plan: free
-    region: oregon
+    # Frankfurt (EU) instead of oregon (US): Deriv throttles/ignores requests
+    # from Render's Oregon datacenter IPs (connect succeeds, responses time out).
+    # EU datacenters usually have better/more trusted connectivity to Deriv.
+    region: frankfurt
     # Pin to Python 3.12: Python 3.14 removed the stdlib "idna" codec that older
     # Werkzeug relied on (LookupError: unknown encoding: idna -> 500 on every
     # request). 3.12 + Werkzeug 3.1.8 is the verified-stable combo. If deploying
