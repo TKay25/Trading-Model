@@ -513,6 +513,13 @@ def disconnect():
     return jsonify({"success": True})
 
 
+# Small cache of the last good candle set per (symbol, granularity) so the chart
+# degrades gracefully when Deriv throttles (e.g. two instances on one account)
+# instead of 500ing the page.
+_CANDLE_CACHE = {}
+_CANDLE_CACHE_MAX_AGE = 300  # seconds
+
+
 @app.route("/api/candles", methods=["POST"])
 def get_candles():
     """Fetch historical candle data from Deriv."""
@@ -522,6 +529,7 @@ def get_candles():
         data.get("timeframe", Config.DEFAULT_TIMEFRAME), 60
     )
     count = data.get("count", 100)
+    cache_key = (symbol, granularity)
 
     async def _fetch(api):
         return await api.get_candles(symbol, granularity, count)
@@ -533,11 +541,17 @@ def get_candles():
 
         if "candles" in result:
             candles = result["candles"]
+            _CANDLE_CACHE[cache_key] = (time.time(), candles)
             return jsonify({"success": True, "candles": candles})
         else:
             return jsonify({"success": False, "error": str(result)}), 400
 
     except Exception as e:
+        # Deriv slow/throttled: serve the last good candles instead of 500ing.
+        cached = _CANDLE_CACHE.get(cache_key)
+        if cached and (time.time() - cached[0]) < _CANDLE_CACHE_MAX_AGE:
+            logger.warning("Serving cached candles for %s (gran=%s): %s", symbol, granularity, e)
+            return jsonify({"success": True, "candles": cached[1], "cached": True})
         logger.error(f"Error fetching candles: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
