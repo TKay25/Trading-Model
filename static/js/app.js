@@ -17,7 +17,10 @@ class TradingDashboardApp {
         this._payoutRatio = 1.82;
 
         // Multi-timeframe / multi-market scanner state
-        this._scannerTimeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
+        // Display-only scanner: fewer timeframes = far fewer ticks_history calls
+        // (Deriv rate-limits that endpoint). The server-side AutoTrader still
+        // scans ALL timeframes for actual trades.
+        this._scannerTimeframes = ['1m', '5m', '15m', '30m'];
         this._scannerTimer = null;
         this._scannerBusy = false;
         this._scannerNotified = {};   // `${symbol}:${tf}:${action}` -> true (avoid repeat alerts)

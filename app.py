@@ -580,12 +580,18 @@ def scanner():
     syms = [s for s in (data.get("symbols") or [symbol]) if s in known] or [Config.DEFAULT_SYMBOL]
 
     async def _scan(api):
-        # Fire all symbol x timeframe fetches concurrently over the ONE connection
-        # (each request has its own integer req_id, routed by the listener) so a
-        # 70-market scan completes in ~1-2s instead of 30s+.
+        # Fire all symbol x timeframe fetches but cap concurrency so Deriv's
+        # ticks_history rate limit isn't blown by the burst (that caused
+        # RateLimit 400s that broke the chart on refresh).
+        sem = asyncio.Semaphore(4)
+
+        async def _one(s, tf):
+            async with sem:
+                return await api.get_candles(s, Config.TIMEFRAMES[tf], count)
+
         keys = [(s, tf) for s in syms for tf in valid]
-        coros = [api.get_candles(s, Config.TIMEFRAMES[tf], count) for (s, tf) in keys]
-        outs = await asyncio.gather(*coros, return_exceptions=True)
+        outs = await asyncio.gather(*(_one(s, tf) for (s, tf) in keys),
+                                    return_exceptions=True)
         results = []
         for (s, tf), res in zip(keys, outs):
             if isinstance(res, Exception):

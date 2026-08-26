@@ -308,9 +308,18 @@ class AutoTrader:
 
     def _scan_candles(self):
         async def _scan(api):
+            # Fire the full 70-fetch scan but cap concurrency so Deriv's
+            # ticks_history rate limit is never blown in one burst (that caused
+            # RateLimit 400s that broke chart loads).
+            sem = asyncio.Semaphore(4)
+
+            async def _one(s, tf):
+                async with sem:
+                    return await api.get_candles(s, self._tfs[tf], _SCAN_COUNT)
+
             keys = [(s, tf) for s in self._symbols for tf in _ALL_TFS]
-            coros = [api.get_candles(s, self._tfs[tf], _SCAN_COUNT) for (s, tf) in keys]
-            outs = await asyncio.gather(*coros, return_exceptions=True)
+            outs = await asyncio.gather(*(_one(s, tf) for (s, tf) in keys),
+                                        return_exceptions=True)
             data = {}
             for (s, tf), res in zip(keys, outs):
                 if isinstance(res, dict) and "candles" in res:
