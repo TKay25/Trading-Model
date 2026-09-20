@@ -16,6 +16,7 @@ from trading_service import (
     TradingService, Candle, PatternRecognizer, TDICalculator
 )
 from auto_trader import AutoTrader
+from strategy_learner import StrategyLearner
 
 # ---------------------------------------------------------------------------
 # idna codec shim (Render crash fix, 2026-08-24)
@@ -76,6 +77,7 @@ balance_stream: LiveBalanceStream = None
 position_monitor: PositionMonitor = None
 _shared_conn: SharedDerivConnection = None
 auto_trader: AutoTrader = None
+strategy_learner: StrategyLearner = None
 
 # In-app ledger of trades placed through this app (contract_id -> metadata).
 # Deriv's profit_table/portfolio omit symbol, lot size and SL/TP, so we keep
@@ -87,6 +89,21 @@ trade_ledger = {}
 # making the JSON ledger (or each save) unwieldy.
 MAX_LEDGER = 5000
 LEDGER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_ledger.json")
+
+# Outcome-results ledger: contract_id -> {metadata + status/profit}. Every trade
+# opened through this app is seeded here at open (in _record_trade_ledger) and its
+# FINAL result (won/lost + profit) is captured by a background reconciler that
+# polls proposal_open_contract until each open position settles. This gives the
+# Winning Analysis a COMPLETE + STABLE view of all trades opened so far — free of
+# Deriv's flaky profit_table history paging (which returned 200/1400/1770 on the
+# same call). Unlike the enriched trade_ledger this store is NOT pruned aggressively
+# (it keeps settled history up to MAX_RESULTS) and carries its own metadata copy.
+trade_results = {}
+MAX_RESULTS = 20000
+RESULTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_results.json")
+_results_lock = threading.Lock()
+_results_backfill_started = False
+_results_reconciler_started = False
 
 
 def _load_ledger():
@@ -117,7 +134,8 @@ def _save_ledger():
 
 
 def _record_trade_ledger(contract_id, symbol, contract_type, lot_size, multiplier,
-                         stop_loss, take_profit, timeframe=None, signal_strength=None):
+                         stop_loss, take_profit, timeframe=None, signal_strength=None,
+                         stake=None):
     """Record a trade in the in-app ledger (history/positions enrichment).
 
     Deriv's profit_table/portfolio omit symbol, lot size, multiplier and SL/TP,
@@ -125,8 +143,11 @@ def _record_trade_ledger(contract_id, symbol, contract_type, lot_size, multiplie
     `timeframe` is the signal timeframe the AutoTrader opened on (used by the
     same-timeframe reversal exit). `signal_strength` is the reversal strength (%)
     the AutoTrader saw when it opened the trade (0-100); None for manual trades.
+    Also seeds the outcome-results entry (status "open") so Winning Analysis can
+    later record this trade's final result (see _seed_result_open).
     """
-    trade_ledger[int(contract_id)] = {
+    cid = int(contract_id)
+    trade_ledger[cid] = {
         "symbol": symbol,
         "contract_type": contract_type,
         "lot_size": lot_size,
@@ -140,6 +161,9 @@ def _record_trade_ledger(contract_id, symbol, contract_type, lot_size, multiplie
         for _cid in list(trade_ledger)[: len(trade_ledger) - MAX_LEDGER]:
             trade_ledger.pop(_cid, None)
     _save_ledger()
+    _seed_result_open(cid, symbol, contract_type, lot_size, multiplier,
+                      stop_loss, take_profit, timeframe, signal_strength,
+                      stake=stake if stake is not None else lot_size)
 
 
 def _num(v):
@@ -150,6 +174,264 @@ def _num(v):
         return None
 
 
+# ---------------------------------------------------------------------------
+# Trade-outcome results ledger (Winning Analysis over ALL trades opened so far)
+# ---------------------------------------------------------------------------
+def _load_results():
+    global trade_results
+    if os.path.exists(RESULTS_FILE):
+        try:
+            with open(RESULTS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    trade_results = {
+                        int(k): v for k, v in data.items() if str(k).lstrip("-").isdigit()
+                    }
+        except Exception:
+            trade_results = {}
+
+
+def _save_results():
+    """Persist the results ledger atomically (temp file + rename) so a crash or
+    concurrent read can never see/leave a truncated file."""
+    try:
+        tmp = RESULTS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(trade_results, f)
+        os.replace(tmp, RESULTS_FILE)
+    except Exception as e:
+        logger.warning(f"Failed to save trade results: {e}")
+
+
+def _seed_result_open(cid, symbol, contract_type, lot_size, multiplier,
+                      stop_loss, take_profit, timeframe, signal_strength,
+                      stake=None):
+    """Create/refresh the 'open' outcome entry for a newly opened trade.
+
+    Only seeds when there is no entry or the existing entry is still open — a
+    re-record must never clobber an already-settled result.
+    """
+    cid = int(cid)
+    with _results_lock:
+        existing = trade_results.get(cid)
+        if existing is not None and existing.get("status") in ("won", "lost"):
+            return
+        try:
+            stake_f = float(stake) if stake is not None else float(lot_size or 0)
+        except (TypeError, ValueError):
+            stake_f = float(lot_size or 0)
+        trade_results[cid] = {
+            "symbol": symbol,
+            "contract_type": contract_type,
+            "lot_size": lot_size,
+            "multiplier": multiplier,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "timeframe": timeframe,
+            "signal_strength": signal_strength,
+            "stake": stake_f,
+            "open_time": int(time.time()),
+            "close_time": None,
+            "status": "open",
+            "profit": None,
+            "payout": None,
+            "sell_price": None,
+        }
+        if len(trade_results) > MAX_RESULTS:
+            extra = len(trade_results) - MAX_RESULTS
+            for _old in sorted(trade_results,
+                               key=lambda k: trade_results[k].get("open_time") or 0)[:extra]:
+                trade_results.pop(_old, None)
+        _save_results()
+
+
+def _settle_result(cid, status, profit, sell_price=None, payout=None,
+                   close_time=None):
+    """Mark a trade as settled with its final profit (idempotent)."""
+    cid = int(cid)
+    with _results_lock:
+        r = trade_results.get(cid)
+        if r is None or r.get("status") in ("won", "lost"):
+            return
+        r["status"] = status
+        try:
+            r["profit"] = float(profit) if profit is not None else None
+        except (TypeError, ValueError):
+            r["profit"] = None
+        r["sell_price"] = sell_price
+        r["payout"] = payout
+        r["close_time"] = close_time if close_time is not None else int(time.time())
+        # NOTE: persistence is done once by the caller (reconciler/backfill batch)
+        # to avoid hundreds of full-file writes per sweep.
+
+
+def _reconcile_open_results(open_ids):
+    """Poll proposal_open_contract for each open id and settle any that have
+    closed (status sold/won/lost/expired). Uses the shared authenticated conn;
+    returns how many were newly settled. Reliable for ANY closed contract —
+    unlike Deriv's profit_table paging — so this is the single capture point."""
+    if not open_ids:
+        return 0
+
+    async def _check(api):
+        sem = asyncio.Semaphore(6)
+
+        async def _one(cid):
+            async with sem:
+                try:
+                    resp = await api._send_request(
+                        {"proposal_open_contract": 1, "contract_id": int(cid)})
+                    if "error" in resp:
+                        return cid, None, None
+                    poc = resp.get("proposal_open_contract") or {}
+                    return cid, poc.get("status"), poc
+                except Exception:
+                    return cid, None, None
+
+        return await asyncio.gather(*(_one(c) for c in open_ids))
+
+    try:
+        outs = _deriv_call(_check, authenticated=True, timeout=60)
+    except Exception as e:
+        logger.warning("Results reconcile failed: %r", e)
+        return 0
+    settled_n = 0
+    now = int(time.time())
+    for cid, status, poc in outs or []:
+        profit = None
+        if poc:
+            try:
+                profit = float(poc.get("profit")) if poc.get("profit") is not None else None
+            except (TypeError, ValueError):
+                profit = None
+            if profit is None:
+                try:
+                    sp = _num(poc.get("sell_price"))
+                    bp = _num(poc.get("buy_price"))
+                    if sp is not None and bp is not None:
+                        profit = sp - bp
+                except Exception:
+                    pass
+        # Deriv closes a multiplier at -100% (full loss) and then returns the
+        # contract WITHOUT a `status` field (verified: status=None, profit=-stake)
+        # while still-open contracts ALWAYS carry status="open". So treat any
+        # status-less response that includes a profit as settled.
+        if status in ("sold", "won", "lost", "expired", "closed"):
+            settled = True
+        elif status is None and profit is not None:
+            settled = True
+        else:
+            settled = False  # status == "open" (or undeterminable -> retry later)
+        if not settled:
+            continue
+        final = "won" if (profit is not None and profit >= 0) else "lost"
+        _settle_result(cid, final, profit,
+                       sell_price=(poc or {}).get("sell_price"),
+                       payout=(poc or {}).get("payout"), close_time=now)
+        settled_n += 1
+    if settled_n:
+        _save_results()   # one atomic write for the whole batch
+    return settled_n
+
+
+def _results_reconciler_loop():
+    """Background daemon: every ~15s settle any opened trade that has closed.
+    Catches manual sells, bot closes, SL/TP monitor sells and Deriv-side
+    auto-closes (multiplier -100%) without touching every sell path."""
+    while True:
+        try:
+            with _results_lock:
+                open_ids = [cid for cid, r in trade_results.items()
+                            if r.get("status") == "open"]
+            if open_ids:
+                n = _reconcile_open_results(open_ids[:80])
+                if n:
+                    logger.info("Results reconciler settled %d trade(s)", n)
+        except Exception:
+            logger.exception("Results reconciler error")
+        time.sleep(15)
+
+
+def _backfill_results_loop():
+    """One-time background backfill: resolve the outcome for every trade this
+    app already opened (the persisted trade ledger) that isn't settled yet, so
+    Winning Analysis covers all trades opened so far even before this feature."""
+    time.sleep(10)  # let the shared auth connection establish first
+    for _attempt in range(3):
+        # 1) seed any ledger trade that has no outcome entry yet
+        with _results_lock:
+            missing = [cid for cid in trade_ledger if cid not in trade_results]
+        for cid in missing:
+            m = trade_ledger.get(cid) or {}
+            _seed_result_open(
+                cid, m.get("symbol"), m.get("contract_type"), m.get("lot_size"),
+                m.get("multiplier"), m.get("stop_loss"), m.get("take_profit"),
+                m.get("timeframe"), m.get("signal_strength"),
+                stake=m.get("lot_size"))
+        # 2) reconcile unsettled ids in chunks (avoid one giant request)
+        with _results_lock:
+            unsettled = [cid for cid, r in trade_results.items()
+                         if r.get("status") == "open"]
+        for i in range(0, len(unsettled), 40):
+            _reconcile_open_results(unsettled[i:i + 40])
+        with _results_lock:
+            still = sum(1 for r in trade_results.values() if r.get("status") == "open")
+        logger.info("Results backfill pass %d: %d resolved, %d still open",
+                    _attempt + 1,
+                    sum(1 for r in trade_results.values()
+                        if r.get("status") in ("won", "lost")), still)
+        if still == 0:
+            break
+        time.sleep(5)
+
+
+def _start_results_threads():
+    """Start the backfill + reconciler threads exactly once (idempotent)."""
+    global _results_backfill_started, _results_reconciler_started
+    if not _results_backfill_started:
+        _results_backfill_started = True
+        threading.Thread(target=_backfill_results_loop, daemon=True,
+                         name="results-backfill").start()
+    if not _results_reconciler_started:
+        _results_reconciler_started = True
+        threading.Thread(target=_results_reconciler_loop, daemon=True,
+                         name="results-reconciler").start()
+
+
+def _results_rows():
+    """Build normalized history rows (open + settled) from the app's own
+    outcome ledger — i.e. EVERY trade opened so far (same schema as history
+    rows, plus contract_id/stake). Used by /api/history so the UI tiles
+    (win rate, performance, VaR/ES) reflect all trades, not just the recent
+    Deriv slice."""
+    rows = []
+    for cid, r in trade_results.items():
+        rows.append({
+            "contract_id": cid,
+            "time": r.get("close_time") or r.get("open_time"),
+            "symbol": r.get("symbol"),
+            "contract_type": r.get("contract_type"),
+            "timeframe": r.get("timeframe"),
+            "signal_strength": r.get("signal_strength"),
+            "lot_size": r.get("lot_size"),
+            "stake": r.get("stake"),
+            "stop_loss": r.get("stop_loss"),
+            "take_profit": r.get("take_profit"),
+            "payout": r.get("payout"),
+            "profit": r.get("profit"),
+            "status": r.get("status"),
+        })
+    rows.sort(key=lambda h: h["time"] or 0, reverse=True)
+    return rows
+
+
+def _results_to_rows():
+    """Settled rows only (Winning Analysis schema) from the app's own outcome
+    ledger — every opened trade with a settled result."""
+    return [r for r in _results_rows()
+            if r.get("status") in ("won", "lost") and r.get("profit") is not None]
+
+
 def init_services():
     """Initialize services: trading service, live market stream, live balance stream.
 
@@ -157,7 +439,7 @@ def init_services():
     though init_services() may be invoked multiple times (module import,
     create_app(), and the __main__ block).
     """
-    global trading_service, live_stream, balance_stream, position_monitor, auto_trader
+    global trading_service, live_stream, balance_stream, position_monitor, auto_trader, strategy_learner
     trading_service = TradingService(symbol=Config.DEFAULT_SYMBOL)
     if live_stream is None:
         live_stream = LiveDerivStream()
@@ -177,6 +459,16 @@ def init_services():
         auto_trader = AutoTrader(
             resolve_multiplier=lambda sym, req: _nearest_multiplier(
                 req, _get_valid_multipliers(sym) or []),
+            # needed by AutoTrader._exits to cap the multiplier so an ATR-sized
+            # stop stays within max_risk_pct of the stake
+            valid_multipliers=lambda sym: _get_valid_multipliers(sym) or [],
+            # the learner (created below) hones k_sl/k_tp per (symbol, timeframe)
+            # and may prune markets with no measurable edge. Lambdas resolve the
+            # module-level global lazily, so ordering here does not matter.
+            params_fn=lambda sym, tf: (strategy_learner.params_for(sym, tf)
+                                       if strategy_learner is not None else None),
+            pruned_fn=lambda sym, tf: (strategy_learner.is_pruned(sym, tf)
+                                       if strategy_learner is not None else False),
             record_trade=_record_trade_ledger,
             position_monitor=position_monitor,
             ledger=trade_ledger,
@@ -187,6 +479,16 @@ def init_services():
             token=Config.DERIV_API_TOKEN,
         )
         auto_trader.start()
+    if strategy_learner is None:
+        # Continuous strategy fitter: re-estimates the exit geometry per
+        # (symbol, timeframe) from the bot's own recorded excursions. It reads
+        # auto_trader's live config, so it can never propose anything outside the
+        # human-set risk limits.
+        strategy_learner = StrategyLearner(cfg_fn=lambda: auto_trader.get_config())
+        strategy_learner.start()
+    # Outcome-results threads: backfill existing trades once, then keep settling
+    # new closes so Winning Analysis reflects ALL trades opened so far.
+    _start_results_threads()
 
 
 _shared_conn_lock = threading.Lock()
@@ -352,6 +654,7 @@ def _nearest_multiplier(requested, allowed):
 
 # Load any previously-recorded trades so history enrichment survives restarts.
 _load_ledger()
+_load_results()
 
 # Initialize on startup (needed for gunicorn/production)
 init_services()
@@ -734,13 +1037,21 @@ def place_trade():
 
         if "buy" in result:
             contract_id = result["buy"]["contract_id"]
-            if stop_loss > 0 or take_profit > 0:
-                position_monitor.track(contract_id, symbol, stop_loss, take_profit,
-                                       break_even=break_even, trail=trail)
+            # Track ALWAYS: with SL/TP set the monitor enforces them; with both
+            # at 0 it is purely observational (it records the trade's P/L path
+            # for the adaptive-exit dataset). See position_monitor.py.
+            position_monitor.track(contract_id, symbol, stop_loss, take_profit,
+                                   break_even=break_even, trail=trail,
+                                   meta={
+                                       "stake": amount,
+                                       "multiplier": multiplier_used,
+                                       "direction": direction,
+                                   })
             # Record in the in-app ledger so history/positions can show the
             # instrument, lot size and SL/TP (Deriv omits these fields).
             _record_trade_ledger(contract_id, symbol, contract_type, lot_size,
-                                 multiplier_used, stop_loss, take_profit)
+                                 multiplier_used, stop_loss, take_profit,
+                                 stake=amount)
             return jsonify({
                 "success": True,
                 "contract_id": contract_id,
@@ -781,7 +1092,7 @@ def sell_contract():
         result = _deriv_call(_sell, authenticated=True)
         if "error" in result:
             return jsonify({"success": False, "error": result["error"].get("message", str(result))}), 400
-        position_monitor.untrack(contract_id)
+        position_monitor.untrack(contract_id, reason="manual")
         return jsonify({"success": True, "result": result})
 
     except Exception as e:
@@ -791,17 +1102,15 @@ def sell_contract():
 
 @app.route("/api/close_all", methods=["POST"])
 def close_all_positions():
-    """Sell/close EVERY open position in one request (concurrently)."""
+    """Sell/close EVERY open position in one request (concurrently).
+
+    NOTE (2026-09-02, user rule): this NO LONGER pauses the server-side
+    AutoTrader. The bot keeps running and may immediately open new positions
+    when its next scan finds a signal — that is the intended behaviour, so
+    "Close All" no longer flips the bot off.
+    """
     if not Config.DERIV_API_TOKEN:
         return jsonify({"success": False, "error": "No API token configured"}), 400
-
-    # Pause the server-side AutoTrader FIRST so it can't re-open positions while
-    # (or right after) we close everything — otherwise "Close All" looks broken
-    # because the bot re-opens trades within seconds.
-    auto_trader_paused = False
-    if auto_trader is not None:
-        auto_trader.update_config(enabled=False)
-        auto_trader_paused = True
 
     async def _close_all(api):
         port = await api.get_portfolio()
@@ -833,8 +1142,9 @@ def close_all_positions():
     try:
         closed, failed = _deriv_call(_close_all, authenticated=True, timeout=60)
         position_monitor.untrack_all()
+        # auto_trader_paused is always False now: Close All never pauses the bot.
         return jsonify({"success": True, "closed": len(closed), "failed": len(failed),
-                        "auto_trader_paused": auto_trader_paused})
+                        "auto_trader_paused": False})
     except Exception as e:
         logger.error(f"Error closing all positions: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -871,7 +1181,7 @@ def close_symbol_positions():
     try:
         closed = _deriv_call(_close_sym, authenticated=True)
         for cid in closed:
-            position_monitor.untrack(cid)
+            position_monitor.untrack(cid, reason="reversal_exit")
         return jsonify({"success": True, "closed": len(closed), "contract_ids": closed})
     except Exception as e:
         logger.error(f"Error closing symbol {symbol}: {e}")
@@ -894,6 +1204,55 @@ def auto_status():
     if auto_trader is None:
         return jsonify({"success": False, "error": "auto-trader not initialized"}), 500
     return jsonify({"success": True, **auto_trader.get_status()})
+
+
+@app.route("/api/strategy")
+def get_strategy():
+    """What the continuous learner currently believes, and the evidence for it.
+
+    Read-only view of strategy_params.json plus the learner's gate thresholds.
+    `groups` shows EVERY fitted group, including the ones it refused to promote
+    and why (insufficient_data / hold_oos_negative / prune / ...).
+    """
+    if strategy_learner is None:
+        return jsonify({"success": False, "error": "learner not initialized"}), 500
+    last = strategy_learner.get_last_fit()
+    applied = strategy_learner.get_applied()
+    return jsonify({
+        "success": True,
+        "state": strategy_learner.get_state(),
+        "applied": applied,
+        "last_fit": last,
+        "learning_enabled": bool((auto_trader.get_config() if auto_trader else {}).get("learning", True)),
+    })
+
+
+@app.route("/api/strategy/refit", methods=["POST"])
+def refit_strategy():
+    """Run a refit immediately (instead of waiting for the 15-minute timer)."""
+    if strategy_learner is None:
+        return jsonify({"success": False, "error": "learner not initialized"}), 500
+    try:
+        return jsonify({"success": True, "result": strategy_learner.run_once()})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/paths")
+def get_paths():
+    """Excursion statistics from the trade-path dataset (MAE/MFE).
+
+    The key number is `dipped_then_recovered`: trades that went deep red and
+    still ended green — i.e. the winners a tighter stop would have destroyed.
+    Compare it against `stop_loss_exits` to see whether the current stop is
+    cutting losers or cutting winners.
+    """
+    try:
+        from position_monitor import path_summary, trade_paths
+        return jsonify({"success": True, **path_summary(),
+                        "records": len(trade_paths)})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/api/positions")
@@ -1123,7 +1482,11 @@ def get_history():
         port = result.get("portfolio", {}) if isinstance(result, dict) else {}
         port_payload = port.get("portfolio", {}) if isinstance(port, dict) else {}
         history = _build_history(pt_payload, port_payload, session.get("history_cutoff") or 0)
-        return jsonify({"success": True, "history": history})
+        # `all` = every trade this app opened (results ledger), so the UI can
+        # compute the always-visible win-rate/performance/VaR tiles over ALL
+        # trades instead of just Deriv's recent slice. `history` stays recent
+        # + open for the table.
+        return jsonify({"success": True, "history": history, "all": _results_rows()})
 
     except Exception as e:
         logger.error(f"Error fetching history: {e}")
@@ -1265,15 +1628,24 @@ def get_analysis():
     if not Config.DERIV_API_TOKEN:
         return jsonify({"success": False, "error": "No API token configured"}), 400
 
-    async def _fetch(api):
-        return await _fetch_full_history(api)
-
     try:
+        # PRIMARY: the app's own outcome ledger — a COMPLETE and STABLE view of
+        # every trade opened so far that has settled (recorded at open, resolved
+        # by the background reconciler via proposal_open_contract). Immune to
+        # Deriv's flaky profit_table history paging.
+        results_rows = _results_to_rows()
+        if results_rows:
+            analysis = _compute_analysis(results_rows)
+            return jsonify({"success": True, "source": "results", **analysis})
+        # FALLBACK (fresh install before the backfill completes): Deriv history.
+        async def _fetch(api):
+            return await _fetch_full_history(api)
+
         pt_payload, port_payload = _deriv_call(_fetch, authenticated=True, timeout=120)
         rows = _build_history(pt_payload, port_payload, session.get("history_cutoff") or 0)
         settled = [r for r in rows if r.get("status") in ("won", "lost")]
         analysis = _compute_analysis(settled)
-        return jsonify({"success": True, **analysis})
+        return jsonify({"success": True, "source": "deriv", **analysis})
     except Exception as e:
         logger.error(f"Error computing analysis: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -1287,11 +1659,18 @@ def clear_trades():
     "history cutoff" timestamp is stored so /api/history and /api/positions only
     return trades placed AFTER the reset — a true fresh start.
     """
-    global trade_ledger
+    global trade_ledger, trade_results
     trade_ledger = {}
     if os.path.exists(LEDGER_FILE):
         try:
             os.remove(LEDGER_FILE)
+        except Exception:
+            pass
+    with _results_lock:
+        trade_results = {}
+    if os.path.exists(RESULTS_FILE):
+        try:
+            os.remove(RESULTS_FILE)
         except Exception:
             pass
     cutoff = int(time.time())

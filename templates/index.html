@@ -222,13 +222,32 @@
                             <span class="switch"></span>
                             <span class="auto-label"><i class="bi bi-robot"></i> Auto-trade</span>
                         </label>
-                        <label class="auto-min">Min <span id="autoStrengthVal">0</span>%</label>
+                        <label class="auto-min">Min <span id="autoStrengthVal">25</span>%</label>
                         <label class="switch-label auto-paper"><input type="checkbox" id="autoTradePaper"> <span>Paper</span></label>
                         <label class="switch-label auto-paper" title="Close a position when TDI + M/W + candlestick signals flip against it"><input type="checkbox" id="autoExitReversal" checked> <span>Exit on rev.</span></label>
                         <span id="autoModeBadge" class="auto-mode-badge live">LIVE</span>
-                        <input type="range" id="autoTradeStrength" min="0" max="100" value="0" step="5" class="auto-range">
+                        <input type="range" id="autoTradeStrength" min="0" max="100" value="25" step="5" class="auto-range">
                     </div>
-                    <p class="sl-tp-hint auto-hint">Server-side auto-trading: all timeframes reversal signals ≥0% (every strength) · Multiple positions per symbol (no hedging) · No fixed SL/TP — exits on opposite reversal (same timeframe) · Works with the page closed.</p>
+                    <div class="auto-trade-row auto-exits">
+                        <label class="auto-min" title="How the stop/target are defined. ATR = scaled to market volatility (a stop inside normal noise gets hit regardless of whether the signal was right). % stake = the old flat mode.">Exit mode
+                            <select id="autoStopMode" class="auto-num auto-select">
+                                <option value="atr">ATR (market)</option>
+                                <option value="stake">% of stake</option>
+                            </select>
+                        </label>
+                        <label class="auto-min stake-only" title="Stake-mode only: stop-loss as a % of the stake">SL <input type="number" id="autoSlPct" class="auto-num" min="0" max="100" step="1" value="20">%</label>
+                        <label class="auto-min stake-only" title="Stake-mode only: take-profit as a % of the stake">TP <input type="number" id="autoTpPct" class="auto-num" min="0" max="2000" step="25" value="500">%</label>
+                        <label class="auto-min atr-only" title="Stop = N x ATR of the signal timeframe">Stop <input type="number" id="autoSlK" class="auto-num" min="0.1" max="20" step="0.1" value="1.5">x ATR</label>
+                        <label class="auto-min atr-only" title="Target = N x ATR of the signal timeframe">Target <input type="number" id="autoTpK" class="auto-num" min="0.5" max="50" step="0.5" value="6">x ATR</label>
+                        <span class="sl-tp-hint" id="autoExitHint">Hard exits on every auto-trade — whichever fires first: SL/TP or the reversal exit.</span>
+                    </div>
+                    <div class="auto-blacklist">
+                        <div class="auto-bl-title"><i class="bi bi-slash-circle"></i> Markets <small id="blMarketsHint">— all trade from the min-strength gate · a blocked (red) chip needs a stronger signal · tap to block / unblock</small></div>
+                        <div id="blMarkets" class="bl-chips"></div>
+                        <div class="auto-bl-title"><i class="bi bi-clock-history"></i> Timeframes <small id="blTimeframesHint">— all trade by default · tap to block / unblock</small></div>
+                        <div id="blTimeframes" class="bl-chips"></div>
+                    </div>
+                    <p class="sl-tp-hint auto-hint" id="autoHint">Auto-trade (runs server-side, page can be closed): all 10 indices × all 7 timeframes · stops sized from ATR so they sit outside normal noise · multiplier auto-capped to keep risk per trade inside your limit · multiple positions per symbol (no hedging).</p>
                 </div>
                 <div id="tradeStatus" class="trade-status d-none"></div>
             </div>

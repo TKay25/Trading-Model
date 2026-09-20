@@ -1,0 +1,36 @@
+# BotTraderX5 — Docker Compose (single container, single bot instance)
+#
+# Prereqs:
+#   1) On the VPS: clone this repo and cd into it.
+#   2) cp .env.example .env   and fill in real values (see .env.example /
+#      config.py for keys). Make sure DERIV_ACCOUNT_TYPE=demo unless you
+#      really want live money.
+#   3) docker compose up -d --build
+#
+# The repo dir is bind-mounted over /app so auto_trader_config.json and
+# trade_ledger.json persist on the host (survive rebuilds/restarts).
+services:
+  bot:
+    build: .
+    image: bot-traderx5:latest
+    container_name: bot-traderx5
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - FLASK_DEBUG=0
+      - PORT=8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/config', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

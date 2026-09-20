@@ -1,0 +1,87 @@
+{
+ "generated_at": 1789918023.065333,
+ "records": 8,
+ "groups": {
+  "1HZ100V|1m": {
+   "n": 1,
+   "multiplier": 100,
+   "avg_atr_pct": 0.1645,
+   "current": {
+    "sl_atr_k": 1.5,
+    "tp_atr_k": 6.0
+   },
+   "status": "insufficient_data",
+   "needed": 30,
+   "ev_pct": null
+  },
+  "1HZ10V|1m": {
+   "n": 3,
+   "multiplier": 400,
+   "avg_atr_pct": 0.0183,
+   "current": {
+    "sl_atr_k": 1.5,
+    "tp_atr_k": 6.0
+   },
+   "status": "insufficient_data",
+   "needed": 30,
+   "ev_pct": null
+  },
+  "1HZ50V|1m": {
+   "n": 1,
+   "multiplier": 80,
+   "avg_atr_pct": 0.1114,
+   "current": {
+    "sl_atr_k": 1.5,
+    "tp_atr_k": 6.0
+   },
+   "status": "insufficient_data",
+   "needed": 30,
+   "ev_pct": null
+  },
+  "R_10|1m": {
+   "n": 1,
+   "multiplier": 400,
+   "avg_atr_pct": 0.0174,
+   "current": {
+    "sl_atr_k": 1.5,
+    "tp_atr_k": 6.0
+   },
+   "status": "insufficient_data",
+   "needed": 30,
+   "ev_pct": null
+  },
+  "R_50|1m": {
+   "n": 1,
+   "multiplier": 80,
+   "avg_atr_pct": 0.0995,
+   "current": {
+    "sl_atr_k": 1.5,
+    "tp_atr_k": 6.0
+   },
+   "status": "insufficient_data",
+   "needed": 30,
+   "ev_pct": null
+  },
+  "R_75|1m": {
+   "n": 1,
+   "multiplier": 100,
+   "avg_atr_pct": 0.1316,
+   "current": {
+    "sl_atr_k": 1.5,
+    "tp_atr_k": 6.0
+   },
+   "status": "insufficient_data",
+   "needed": 30,
+   "ev_pct": null
+  }
+ },
+ "params": {},
+ "skip": [],
+ "thresholds": {
+  "min_trades": 30,
+  "min_oos_trades": 6,
+  "oos_fraction": 0.3,
+  "beat_margin": 0.02
+ },
+ "enabled": true
+}

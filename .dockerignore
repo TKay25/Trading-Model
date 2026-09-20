@@ -1,0 +1,14 @@
+# Build context exclusions (keep the docker build small & clean)
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+artifacts
+.cursor
+.vscode
+push_out*.txt
+push_result*.txt
+.DS_Store
+*.log

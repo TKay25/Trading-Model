@@ -79,6 +79,25 @@ class TradingDashboardApp {
         this.autoTradePaper = document.getElementById('autoTradePaper');
         this.autoModeBadge = document.getElementById('autoModeBadge');
         this.autoExitReversal = document.getElementById('autoExitReversal');
+        this.autoSlPct = document.getElementById('autoSlPct');
+        this.autoTpPct = document.getElementById('autoTpPct');
+        this.autoStopMode = document.getElementById('autoStopMode');
+        this.autoSlK = document.getElementById('autoSlK');
+        this.autoTpK = document.getElementById('autoTpK');
+        this.autoExitHint = document.getElementById('autoExitHint');
+        this.blMarketsHint = document.getElementById('blMarketsHint');
+        this.blTimeframesHint = document.getElementById('blTimeframesHint');
+        this.autoHint = document.getElementById('autoHint');
+        this._exitCfg = { stop_mode: 'atr', sl_atr_k: 1.5, tp_atr_k: 6, max_risk_pct: 0.3, min_stop_move_pct: 0.5 };
+        this.blMarkets = document.getElementById('blMarkets');
+        this.blTimeframes = document.getElementById('blTimeframes');
+        // Blacklist state (server config syncs into these via _pollAutoStatus).
+        this._blockedSymbols = [];
+        this._blockedTimeframes = [];
+        this._blockedStrength = 60;   // blacklisted markets must reach this % to alert/trade
+        this._blSymbols = ['R_10', 'R_25', 'R_50', 'R_75', 'R_100',
+                           '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V'];
+        this._blTimeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
 
         // Performance / analytics
         this.equityCanvas = document.getElementById('equityCanvas');
@@ -162,10 +181,11 @@ class TradingDashboardApp {
         // Risk-based lot sizing.
         if (this.riskPct) this.riskPct.addEventListener('input', () => this._suggestLot());
 
-        // Auto-trade min-strength label.
+        // Thresholds shown in the box follow the slider live.
         if (this.autoTradeStrength) {
             this.autoTradeStrength.addEventListener('input', () => {
                 if (this.autoStrengthVal) this.autoStrengthVal.textContent = this.autoTradeStrength.value;
+                this._renderAutoThresholds();
             });
         }
 
@@ -177,8 +197,28 @@ class TradingDashboardApp {
         if (this.autoTradeToggle) this.autoTradeToggle.addEventListener('change', () => this._syncAutoConfig());
         if (this.autoExitReversal) this.autoExitReversal.addEventListener('change', () => this._syncAutoConfig());
         if (this.autoTradeStrength) this.autoTradeStrength.addEventListener('change', () => this._syncAutoConfig());
+        // Hard SL/TP exits: ATR mode (market-scaled) or legacy %-of-stake mode.
+        if (this.autoSlPct) this.autoSlPct.addEventListener('change', () => { this._updateAutoExitHint(); this._syncAutoConfig(); });
+        if (this.autoTpPct) this.autoTpPct.addEventListener('change', () => { this._updateAutoExitHint(); this._syncAutoConfig(); });
+        if (this.autoSlPct) this.autoSlPct.addEventListener('input', () => this._updateAutoExitHint());
+        if (this.autoTpPct) this.autoTpPct.addEventListener('input', () => this._updateAutoExitHint());
+        if (this.autoStopMode) this.autoStopMode.addEventListener('change', () => { this._applyStopMode(); this._syncAutoConfig(); });
+        if (this.autoSlK) this.autoSlK.addEventListener('change', () => { this._updateAutoExitHint(); this._syncAutoConfig(); });
+        if (this.autoTpK) this.autoTpK.addEventListener('change', () => { this._updateAutoExitHint(); this._syncAutoConfig(); });
+        if (this.autoSlK) this.autoSlK.addEventListener('input', () => this._updateAutoExitHint());
+        if (this.autoTpK) this.autoTpK.addEventListener('input', () => this._updateAutoExitHint());
         const lotEl = document.getElementById('tradeLotSize');
-        if (lotEl) lotEl.addEventListener('change', () => this._syncAutoConfig());
+        if (lotEl) lotEl.addEventListener('change', () => { this._updateAutoExitHint(); this._syncAutoConfig(); });
+        this._applyStopMode();
+        this._updateAutoExitHint();
+
+        // Blacklist chips (blocked markets / timeframes).
+        if (this.blMarkets) this.blMarkets.addEventListener('click', (e) => this._onChipClick(e, 'market'));
+        if (this.blTimeframes) this.blTimeframes.addEventListener('click', (e) => this._onChipClick(e, 'tf'));
+        // Render once up front: _pollAutoStatus only re-renders when the lists
+        // CHANGE, so with nothing blocked (both empty) the chips would never
+        // appear at all and the user couldn't block anything.
+        this._renderAutoThresholds();
 
         // Backtest + CSV export + reset.
         if (this.runBacktest) this.runBacktest.addEventListener('click', () => this._runBacktest());
@@ -199,6 +239,170 @@ class TradingDashboardApp {
     }
 
     /**
+     * Show the controls for the ACTIVE exit mode only (ATR vs % of stake) — two
+     * sets of exit inputs on screen at once is confusing, and only one set is
+     * actually driving the server-side bot.
+     */
+    _applyStopMode() {
+        const mode = (this.autoStopMode && this.autoStopMode.value) || this._exitCfg.stop_mode || 'atr';
+        const box = document.querySelector('.auto-trade-box');
+        if (box) box.setAttribute('data-stop-mode', mode);
+    }
+
+    /**
+     * Describe the active exit rule. In ATR mode the stop is a MARKET distance
+     * (k x ATR of the signal timeframe) and the $ risk depends on the
+     * multiplier, which the server caps — so we show the cap, not a fixed $.
+     */
+    _updateAutoExitHint() {
+        if (!this.autoExitHint) return;
+        const stake = parseFloat((document.getElementById('tradeLotSize') || {}).value) || 1;
+        const mode = (this.autoStopMode && this.autoStopMode.value) || 'atr';
+        if (mode === 'atr') {
+            const kSl = parseFloat(this.autoSlK && this.autoSlK.value) || this._exitCfg.sl_atr_k;
+            const kTp = parseFloat(this.autoTpK && this.autoTpK.value) || this._exitCfg.tp_atr_k;
+            const floor = this._exitCfg.min_stop_move_pct || 0.05;
+            const rr = kSl > 0 ? (kTp / kSl).toFixed(1) : '--';
+            // Per-timeframe risk caps come live from the server; show them so the
+            // number on screen is the number the bot enforces.
+            const byTf = this._exitCfg.risk_by_tf || {};
+            const capTxt = this._blTimeframes.filter(tf => byTf[tf] !== undefined)
+                .map(tf => `${tf} ≤${Math.round(byTf[tf] * 100)}%`).join(' · ');
+            this.autoExitHint.innerHTML =
+                `ATR exits: stop <b>${kSl}×ATR</b> · target <b>${kTp}×ATR</b> (R:R 1:${rr}) · ` +
+                `stop never closer than ${floor}% of price · ` +
+                `risk per trade ${capTxt || '≤' + Math.round((this._exitCfg.max_risk_pct || 0.8) * 100) + '%'} ` +
+                `of the $${stake.toFixed(2)} stake · timeframes are dropped when no affordable stop exists`;
+            return;
+        }
+        const slPct = parseFloat(this.autoSlPct && this.autoSlPct.value);
+        const tpPct = parseFloat(this.autoTpPct && this.autoTpPct.value);
+        const sl = (stake * (isNaN(slPct) ? 0 : slPct)) / 100;
+        const tp = (stake * (isNaN(tpPct) ? 0 : tpPct)) / 100;
+        const rr = sl > 0 ? `1:${(tp / sl).toFixed(0)}` : '--';
+        this.autoExitHint.innerHTML =
+            `Stake exits: risk <b>$${sl.toFixed(2)}</b> · target ` +
+            `<b>$${tp.toFixed(2)}</b> on a $${stake.toFixed(2)} stake · R:R ${rr}`;
+    }
+
+    /**
+     * Render the blocked-markets / blocked-timeframes chips. Blocked chips get
+     * the .blocked style; allowed ones .active. Clicking toggles + pushes to the
+     * server-side AutoTrader (so it works with the page closed).
+     */
+    _renderBlockChips() {
+        // Thresholds come from the LIVE config, not from hardcoded strings — the
+        // old text said "(≥60%)" / "(50%)" forever and therefore lied as soon as
+        // the min-strength slider moved.
+        const minS = this._minStrengthPct();
+        const blk = this._blockedStrengthPct();
+        const tipBlocked = `Blocked — only trades on strong signals (≥${blk}%); ` +
+                           `click to trade from the normal gate (${minS}%)`;
+        const tipActive = `Active — trades from the min-strength gate (${minS}%); ` +
+                          `click to require a strong signal (≥${blk}%)`;
+        if (this.blMarkets) {
+            this.blMarkets.innerHTML = this._blSymbols.map(k =>
+                `<button type="button" class="bl-chip ${this._blockedSymbols.indexOf(k) >= 0 ? 'blocked' : 'active'}" data-key="${k}" title="${this._blockedSymbols.indexOf(k) >= 0 ? tipBlocked : tipActive}">${k}</button>`
+            ).join('');
+        }
+        if (this.blTimeframes) {
+            // A timeframe only trades if the config gives it a risk cap
+            // (risk_by_tf). 1h/4h/1d cannot be traded at ALL with multipliers:
+            // at Deriv's lowest multiplier a stop for them would cost more than
+            // the stake, so the -100% auto-close would always fire first. Show
+            // them as unavailable instead of pretending they're active.
+            const caps = this._exitCfg.risk_by_tf || {};
+            this.blTimeframes.innerHTML = this._blTimeframes.map(k => {
+                const blocked = this._blockedTimeframes.indexOf(k) >= 0;
+                if (!blocked && caps[k] === undefined) {
+                    return `<button type="button" class="bl-chip na" data-key="${k}" ` +
+                           `title="Not traded: at Deriv's lowest multiplier no stop can sit outside ` +
+                           `normal noise on this timeframe — it needs more of the stake than the ` +
+                           `position has. Long timeframes need binary options, not multipliers.">${k}</button>`;
+                }
+                return `<button type="button" class="bl-chip ${blocked ? 'blocked' : 'active'}" data-key="${k}" ` +
+                       `title="${blocked ? tipBlocked : tipActive} · risk ≤${Math.round((caps[k] || 0) * 100)}% of stake">${k}</button>`;
+            }).join('');
+        }
+    }
+
+    /** Min-strength gate currently in force (slider value, else server value). */
+    _minStrengthPct() {
+        const v = parseInt((this.autoTradeStrength || {}).value, 10);
+        return Number.isNaN(v) ? 50 : v;
+    }
+
+    /** Strength a BLOCKED market needs (server-side blocked_strength). */
+    _blockedStrengthPct() {
+        return Math.round(this._blockedStrength || 60);
+    }
+
+    /**
+     * Write every threshold mentioned in the auto-trade box from the live config:
+     * the Markets line, the card hint, and (via the chip tooltips) each market.
+     */
+    _renderAutoThresholds() {
+        const minS = this._minStrengthPct();
+        const blk = this._blockedStrengthPct();
+        const risk = Math.round((this._exitCfg.max_risk_pct || 0.3) * 100);
+        if (this.blMarketsHint) {
+            this.blMarketsHint.textContent =
+                `— all trade from the min-strength gate (${minS}%) · ` +
+                `a blocked (red) chip needs a strong signal (≥${blk}%) · tap to block / unblock`;
+        }
+        if (this.blTimeframesHint) {
+            this.blTimeframesHint.textContent =
+                `— all trade from the min-strength gate (${minS}%) · tap to block / unblock`;
+        }
+        if (this.autoHint) {
+            const caps = this._exitCfg.risk_by_tf || {};
+            const ordered = this._blTimeframes.filter(tf => caps[tf] !== undefined);
+            const capTxt = ordered.length
+                ? ordered.map(tf => `${tf} ≤${Math.round(caps[tf] * 100)}%`).join(', ')
+                : `≤${Math.round((this._exitCfg.max_risk_pct || 0.8) * 100)}%`;
+            const tradeable = ordered.length ? ordered.join('/') : '1m/5m/15m/30m';
+            this.autoHint.innerHTML =
+                `Auto-trade (runs server-side, page can be closed): ` +
+                `<b>all 10 indices × ${tradeable}</b> · min strength ${minS}% · ` +
+                `stops sized from ATR so they sit outside normal noise · ` +
+                `risk per trade ${capTxt} of the stake · timeframes without an affordable ` +
+                `stop are skipped (1h/4h/1d cannot host a real stop at any Deriv multiplier) · ` +
+                `multiple positions per symbol (no hedging).`;
+        }
+        this._renderBlockChips();
+    }
+
+    _onChipClick(e, kind) {
+        const btn = e.target.closest('.bl-chip');
+        if (!btn || !btn.dataset.key) return;
+        const key = btn.dataset.key;
+        if (kind === 'market') {
+            const idx = this._blockedSymbols.indexOf(key);
+            if (idx >= 0) this._blockedSymbols.splice(idx, 1);
+            else this._blockedSymbols.push(key);
+        } else {
+            const idx = this._blockedTimeframes.indexOf(key);
+            if (idx >= 0) this._blockedTimeframes.splice(idx, 1);
+            else this._blockedTimeframes.push(key);
+        }
+        this._renderBlockChips();
+        this._pushBlacklist();
+    }
+
+    async _pushBlacklist() {
+        try {
+            await fetch('/api/auto/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    blocked_symbols: this._blockedSymbols,
+                    blocked_timeframes: this._blockedTimeframes,
+                }),
+            });
+        } catch (_) { /* ignore */ }
+    }
+
+    /**
      * Push the current UI auto-trade settings to the SERVER-side AutoTrader.
      * The server does the actual opening/closing (works with the page closed).
      */
@@ -206,6 +410,9 @@ class TradingDashboardApp {
         const stake = parseFloat((document.getElementById('tradeLotSize') || {}).value) || 1;
         // 0 is a valid min strength (open at EVERY signal), so don't fall back to 50.
         const minStr = parseFloat(this.autoTradeStrength && this.autoTradeStrength.value);
+        // Hard exits as FRACTIONS of the stake (server multiplies by stake).
+        const slPct = parseFloat(this.autoSlPct && this.autoSlPct.value);
+        const tpPct = parseFloat(this.autoTpPct && this.autoTpPct.value);
         const body = {
             enabled: !!(this.autoTradeToggle && this.autoTradeToggle.checked),
             min_strength: Number.isNaN(minStr) ? 0 : minStr,
@@ -213,6 +420,15 @@ class TradingDashboardApp {
             exit_on_reversal: !!(this.autoExitReversal && this.autoExitReversal.checked),
             stake: stake,
         };
+        // Only send when the user has actually set a number (an empty box or a
+        // typo must never silently disable the stop).
+        if (!Number.isNaN(slPct)) body.stop_loss_pct = slPct / 100;
+        if (!Number.isNaN(tpPct)) body.take_profit_pct = tpPct / 100;
+        if (this.autoStopMode) body.stop_mode = this.autoStopMode.value;
+        const slK = parseFloat(this.autoSlK && this.autoSlK.value);
+        const tpK = parseFloat(this.autoTpK && this.autoTpK.value);
+        if (!Number.isNaN(slK) && slK > 0) body.sl_atr_k = slK;
+        if (!Number.isNaN(tpK) && tpK > 0) body.tp_atr_k = tpK;
         try {
             await fetch('/api/auto/config', {
                 method: 'POST',
@@ -239,7 +455,50 @@ class TradingDashboardApp {
                     this.autoTradeStrength.value = data.config.min_strength;
                     if (this.autoStrengthVal) this.autoStrengthVal.textContent = data.config.min_strength;
                 }
+                // Reflect the server's blocked markets/timeframes onto the chips
+                // (re-render only when they actually changed).
+                const sameList = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every(v => b.includes(v));
+                let blChanged = false;
+                if (Array.isArray(data.config.blocked_symbols) && !sameList(this._blockedSymbols, data.config.blocked_symbols)) {
+                    this._blockedSymbols = data.config.blocked_symbols.slice(); blChanged = true;
+                }
+                if (Array.isArray(data.config.blocked_timeframes) && !sameList(this._blockedTimeframes, data.config.blocked_timeframes)) {
+                    this._blockedTimeframes = data.config.blocked_timeframes.slice(); blChanged = true;
+                }
+                if (typeof data.config.blocked_strength === 'number') this._blockedStrength = data.config.blocked_strength;
+                // Reflect the server's exit geometry back onto the inputs.
+                if (typeof data.config.stop_loss_pct === 'number' && this.autoSlPct
+                    && document.activeElement !== this.autoSlPct) {
+                    this.autoSlPct.value = Math.round(data.config.stop_loss_pct * 100);
+                }
+                if (typeof data.config.take_profit_pct === 'number' && this.autoTpPct
+                    && document.activeElement !== this.autoTpPct) {
+                    this.autoTpPct.value = Math.round(data.config.take_profit_pct * 100);
+                }
+                this._exitCfg = {
+                    stop_mode: data.config.stop_mode || 'atr',
+                    sl_atr_k: data.config.sl_atr_k || 1.5,
+                    tp_atr_k: data.config.tp_atr_k || 6,
+                    max_risk_pct: typeof data.config.max_risk_pct === 'number' ? data.config.max_risk_pct : 0.8,
+                    min_stop_move_pct: typeof data.config.min_stop_move_pct === 'number' ? data.config.min_stop_move_pct : 0.05,
+                    risk_by_tf: (data.config.risk_by_tf && typeof data.config.risk_by_tf === 'object') ? data.config.risk_by_tf : {},
+                };
+                if (this.autoStopMode && document.activeElement !== this.autoStopMode) {
+                    this.autoStopMode.value = this._exitCfg.stop_mode;
+                }
+                if (this.autoSlK && document.activeElement !== this.autoSlK) {
+                    this.autoSlK.value = this._exitCfg.sl_atr_k;
+                }
+                if (this.autoTpK && document.activeElement !== this.autoTpK) {
+                    this.autoTpK.value = this._exitCfg.tp_atr_k;
+                }
+                if (blChanged) this._renderBlockChips();
+                this._applyStopMode();
+                this._updateAutoExitHint();
                 this._updateAutoMode();
+                // LAST: the threshold text reads _exitCfg (risk %) and the gate
+                // values, so it must run after they have all been refreshed.
+                this._renderAutoThresholds();
             }
             const at = data.at || 0;
             if (this._lastAutoActivity === undefined) { this._lastAutoActivity = at; return; }
@@ -435,10 +694,31 @@ class TradingDashboardApp {
     }
 
     /**
+     * Effective strength a signal must reach before the bot MAY act on it:
+     * >= min_strength on active (unblocked) markets, >= blocked_strength on
+     * blacklisted markets. Notifications use this same gate so you are never
+     * pinged about a signal the bot is not allowed to trade at that strength.
+     */
+    _strengthGateFor(symbol) {
+        const raw = this.autoTradeStrength && this.autoTradeStrength.value;
+        const minStr = parseFloat(raw);
+        const base = Number.isNaN(minStr) ? 0 : minStr;
+        if ((this._blockedSymbols || []).indexOf(symbol) >= 0) {
+            return Math.max(base, this._blockedStrength || 60);
+        }
+        return base;
+    }
+
+    /**
      * Alert ONCE per new strong signal on a market that isn't on screen:
      * toast + sound + desktop notification. Re-arms when the signal fades.
+     * Only fires when the signal strength meets the market's gate (the same
+     * ranges the AutoTrader uses to actually open the trade).
      */
     _checkScannerAlert(symbol, tf, signal) {
+        const pct = Math.round((signal.strength || 0) * 100);
+        if (pct < this._strengthGateFor(symbol)) return;   // below my set range
+
         // Only reversal verdicts are alerted now (they're what auto-trade fires on).
         const action = (signal.reversal === 'BUY' || signal.reversal === 'SELL')
             ? signal.reversal
@@ -447,7 +727,6 @@ class TradingDashboardApp {
         if (this._scannerNotified[key]) return;
         this._scannerNotified[key] = true;
 
-        const pct = Math.round((signal.strength || 0) * 100);
         this._notify(
             `${symbol} ${tf} ${action} REVERSAL`,
             `${symbol} · ${tf} — ${action} reversal (TDI + Bollinger/RSI + M/W/H&S/candles). Strength ${pct}%.`
@@ -893,6 +1172,7 @@ class TradingDashboardApp {
                 }
                 this._updatePerformance([]);
                 this._renderEquityCurve([]);
+                this._updateStatsFromHistory([], []);
                 this._notify('Reset', 'All trades cleared. History starts fresh from now.');
             } else {
                 this._notify('Reset Failed', data.error || 'Could not reset history');
@@ -1102,7 +1382,7 @@ class TradingDashboardApp {
             const resp = await fetch('/api/history');
             const data = await resp.json();
             if (data.success && Array.isArray(data.history)) {
-                this._renderHistory(data.history);
+                this._renderHistory(data.history, data.all);
             } else {
                 this.historyBody.innerHTML =
                     `<tr class="history-empty"><td colspan="6">${data.error || 'No history available'}</td></tr>`;
@@ -1113,9 +1393,13 @@ class TradingDashboardApp {
         }
     }
 
-    _renderHistory(rows) {
+    _renderHistory(rows, allRows) {
         this._historyRows = rows || [];
-        this._updatePerformance(this._historyRows);
+        // Win-rate / performance / VaR tiles are computed over ALL trades opened
+        // so far (the results ledger served as `all`) so they match the Winning
+        // Analysis; the table below keeps showing the recent + open activity.
+        const fullRows = (Array.isArray(allRows) && allRows.length) ? allRows : (rows || []);
+        this._updatePerformance(fullRows);
         if (!rows || !rows.length) {
             this.historyBody.innerHTML =
                 '<tr class="history-empty"><td colspan="11"><i class="bi bi-journal-x"></i>No trades yet.</td></tr>';
@@ -1156,7 +1440,7 @@ class TradingDashboardApp {
                 <td><span class="history-status ${status}">${label}</span></td>
             </tr>`;
         }).join('');
-        this._updateStatsFromHistory(rows);
+        this._updateStatsFromHistory(rows, fullRows);
         // Learn the actual payout ratio from the most recent settled trade.
         const settled = rows.filter(r => r.status !== 'open');
         if (settled.length && settled[0].stake > 0 && settled[0].payout > 0) {
@@ -1270,7 +1554,9 @@ class TradingDashboardApp {
      * Close every open position at once.
      */
     async _closeAllPositions() {
-        if (!confirm('Close ALL open positions?\n\nAuto-trade will be paused so the bot does not re-open new positions.')) return;
+        // USER RULE (2026-09-02): Close All does NOT pause auto-trade. The bot
+        // stays enabled and may re-open positions on its next scan.
+        if (!confirm('Close ALL open positions?\n\nAuto-trade stays ON — the bot may open new positions when it finds signals.')) return;
         const btn = document.getElementById('closeAllPositions');
         if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-x-circle"></i> Closing…'; }
         // Guard against a hung request so the button always re-enables.
@@ -1280,9 +1566,7 @@ class TradingDashboardApp {
             const resp = await fetch('/api/close_all', { method: 'POST', signal: ctrl.signal });
             const data = await resp.json();
             if (data.success) {
-                const paused = data.auto_trader_paused ? ' · Auto-trade paused' : '';
-                this._notify('Closed All', `Closed ${data.closed} open position(s)` + paused);
-                if (this.autoTradeToggle) this.autoTradeToggle.checked = false;
+                this._notify('Closed All', `Closed ${data.closed} open position(s) · Auto-trade running`);
                 this._loadPositions();
                 this._loadHistory();
             } else {
@@ -1493,10 +1777,13 @@ class TradingDashboardApp {
     /**
      * Refresh the Win Rate + Session P/L KPI tiles from the history rows.
      */
-    _updateStatsFromHistory(rows) {
-        const settled = (rows || []).filter(r => r.status !== 'open');
+    _updateStatsFromHistory(recentRows, allRows) {
+        // Win Rate tile = ALL settled trades opened so far (results ledger).
+        const winRows = (Array.isArray(allRows) && allRows.length) ? allRows : (recentRows || []);
+        const settled = (winRows || []).filter(r => r.status !== 'open');
         const won = settled.filter(r => r.status === 'won').length;
-        const totalPL = (rows || []).reduce((sum, r) => sum + (r.status !== 'open' ? (r.profit ?? 0) : 0), 0);
+        // Session P/L tile stays derived from the recent view (this session's trades).
+        const totalPL = (recentRows || []).reduce((sum, r) => sum + (r.status !== 'open' ? (r.profit ?? 0) : 0), 0);
 
         const wrEl = document.getElementById('statWinRate');
         if (wrEl) wrEl.textContent = settled.length ? Math.round((won / settled.length) * 100) + '%' : '--';

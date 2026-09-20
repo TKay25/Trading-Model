@@ -1,0 +1,43 @@
+# Push-to-deploy: every push to `main` updates the bot on your VPS.
+#
+# Prereqs on the VPS (after deploy/setup_interserver.sh):
+#   - the service is installed: sudo systemctl enable --now bot-traderx5
+#   - give the deploy user passwordless sudo for the service restart:
+#       echo 'bot ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart bot-traderx5' \
+#            | sudo tee /etc/sudoers.d/bot-traderx5
+#   - create an SSH keypair and add the PUBLIC key to /root/.ssh/authorized_keys
+#     (or the deploy user's authorized_keys)
+#
+# Then add GitHub repo secrets:
+#   VPS_HOST     = your VPS IP or hostname
+#   VPS_USER     = the user that owns /opt/bot (e.g. `bot`)
+#   VPS_SSH_KEY  = the PRIVATE key (PEM format)
+#   VPS_PORT     = 22 (optional)
+
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            set -e
+            cd /opt/bot
+            git pull --ff-only origin main
+            .venv/bin/pip install --quiet -r requirements.txt
+            sudo systemctl restart bot-traderx5
+            sleep 2
+            curl -sf http://127.0.0.1:8000/api/auto/status >/dev/null \
+              && echo "OK: bot is back up" \
+              || { echo "WARNING: health check failed"; exit 1; }
