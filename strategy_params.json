@@ -1,6 +1,6 @@
 {
- "generated_at": 1789918023.065333,
- "records": 8,
+ "generated_at": 1789918923.3819344,
+ "records": 9,
  "groups": {
   "1HZ100V|1m": {
    "n": 1,
@@ -39,9 +39,9 @@
    "ev_pct": null
   },
   "R_10|1m": {
-   "n": 1,
+   "n": 2,
    "multiplier": 400,
-   "avg_atr_pct": 0.0174,
+   "avg_atr_pct": 0.0188,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
