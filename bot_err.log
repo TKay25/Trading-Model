@@ -203,3 +203,4 @@
 2026-09-21 13:22:38,874 [WARNING] __main__: Portfolio EMPTY with 17 tracked; re-auth SUPPRESSED (56s since last attempt) - serving 17 cached contract(s)
 2026-09-21 13:22:38,877 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:38] "GET /api/positions HTTP/1.1" 200 -
 2026-09-21 13:22:39,184 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:39] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:22:41,814 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:41] "GET /api/auto/status HTTP/1.1" 200 -
