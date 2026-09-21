@@ -104,6 +104,14 @@
                 </div>
                 <div id="tradingChart"></div>
             </div>
+
+            <!-- Drag to trade height between the price chart and the TDI pane.
+                 #chartContainer is flex:1 1 auto, so the total is preserved:
+                 whatever the pane gains, the chart gives up. Double-click resets. -->
+            <div class="pane-splitter" id="paneSplitter" role="separator"
+                 aria-orientation="horizontal" tabindex="0" aria-label="Resize the TDI pane"
+                 title="Drag to resize the TDI pane \u00b7 double-click to reset"></div>
+
             <div class="rsi-pane">
                 <div class="rsi-pane-title">
                     <span>TDI</span>

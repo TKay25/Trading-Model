@@ -1,262 +1,103 @@
 {
- "generated_at": 1789991190.590805,
- "records": 83,
+ "generated_at": 1789994487.801685,
+ "records": 106,
  "groups": {
-  "1HZ100V|15m": {
-   "n": 1,
+  "*|15m": {
+   "n": 18,
    "multiplier": 40,
-   "avg_atr_pct": 0.801,
+   "avg_atr_pct": 0.6162,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
    },
    "status": "insufficient_data",
    "needed": 30,
-   "ev_pct": null
+   "ev_pct": null,
+   "pooled": true,
+   "key": "*|15m"
   },
-  "1HZ100V|1m": {
-   "n": 2,
-   "multiplier": 100,
-   "avg_atr_pct": 0.1675,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "1HZ10V|1m": {
-   "n": 11,
+  "*|1m": {
+   "n": 60,
    "multiplier": 400,
-   "avg_atr_pct": 0.0197,
+   "avg_atr_pct": 0.0763,
+   "current": {
+    "sl_atr_k": 1.5,
+    "tp_atr_k": 6.0
+   },
+   "baseline_ev_pct": -0.0749,
+   "proposed": {
+    "sl_atr_k": 1.0,
+    "tp_atr_k": 8.0
+   },
+   "fit_ev_pct": -0.0509,
+   "fit_n": 42,
+   "fit_win_rate": 0.119,
+   "risk_pct": 0.0752,
+   "oos_ev_pct": -0.0462,
+   "oos_n": 18,
+   "status": "prune",
+   "note": "best fitted rule is not positive \u2014 stop trading this market",
+   "pooled": true,
+   "key": "*|1m"
+  },
+  "*|30m": {
+   "n": 4,
+   "multiplier": 40,
+   "avg_atr_pct": 0.8334,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
    },
    "status": "insufficient_data",
    "needed": 30,
-   "ev_pct": null
+   "ev_pct": null,
+   "pooled": true,
+   "key": "*|30m"
   },
-  "1HZ25V|1m": {
-   "n": 4,
+  "*|5m": {
+   "n": 24,
    "multiplier": 160,
-   "avg_atr_pct": 0.0515,
+   "avg_atr_pct": 0.2203,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
    },
    "status": "insufficient_data",
    "needed": 30,
-   "ev_pct": null
+   "ev_pct": null,
+   "pooled": true,
+   "key": "*|5m"
   },
-  "1HZ50V|15m": {
-   "n": 6,
-   "multiplier": 80,
-   "avg_atr_pct": 0.4304,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "1HZ50V|1m": {
-   "n": 3,
-   "multiplier": 80,
-   "avg_atr_pct": 0.0998,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "1HZ50V|30m": {
-   "n": 2,
-   "multiplier": 80,
-   "avg_atr_pct": 0.5856,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "1HZ50V|5m": {
-   "n": 1,
-   "multiplier": 80,
-   "avg_atr_pct": 0.2402,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "1HZ75V|15m": {
-   "n": 4,
-   "multiplier": 50,
-   "avg_atr_pct": 0.5661,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "1HZ75V|1m": {
-   "n": 3,
-   "multiplier": 50,
-   "avg_atr_pct": 0.1361,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "1HZ75V|5m": {
-   "n": 6,
-   "multiplier": 50,
-   "avg_atr_pct": 0.3268,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "R_100|15m": {
-   "n": 2,
-   "multiplier": 40,
-   "avg_atr_pct": 0.8366,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "R_100|1m": {
-   "n": 5,
-   "multiplier": 40,
-   "avg_atr_pct": 0.1882,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "R_100|30m": {
-   "n": 2,
-   "multiplier": 40,
-   "avg_atr_pct": 1.0812,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "R_100|5m": {
-   "n": 1,
-   "multiplier": 40,
-   "avg_atr_pct": 0.4332,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "R_10|1m": {
-   "n": 11,
+  "*|*": {
+   "n": 106,
    "multiplier": 400,
-   "avg_atr_pct": 0.0184,
+   "avg_atr_pct": 0.2292,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
    },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "R_25|1m": {
-   "n": 6,
-   "multiplier": 160,
-   "avg_atr_pct": 0.0448,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
+   "baseline_ev_pct": -0.0262,
+   "proposed": {
+    "sl_atr_k": 1.0,
+    "tp_atr_k": 8.0
    },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "R_25|5m": {
-   "n": 2,
-   "multiplier": 160,
-   "avg_atr_pct": 0.1152,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "R_50|1m": {
-   "n": 4,
-   "multiplier": 80,
-   "avg_atr_pct": 0.096,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "R_50|5m": {
-   "n": 2,
-   "multiplier": 80,
-   "avg_atr_pct": 0.2127,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
-  },
-  "R_75|1m": {
-   "n": 5,
-   "multiplier": 50,
-   "avg_atr_pct": 0.1429,
-   "current": {
-    "sl_atr_k": 1.5,
-    "tp_atr_k": 6.0
-   },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null
+   "fit_ev_pct": -0.0043,
+   "fit_n": 74,
+   "fit_win_rate": 0.243,
+   "risk_pct": 0.0889,
+   "oos_ev_pct": -0.1475,
+   "oos_n": 32,
+   "status": "prune",
+   "note": "best fitted rule is not positive \u2014 stop trading this market",
+   "pooled": true,
+   "key": "*|*"
   }
  },
  "params": {},
- "skip": [],
+ "skip": [
+  "*|1m"
+ ],
+ "global_verdict": "prune",
  "thresholds": {
   "min_trades": 30,
   "min_oos_trades": 6,

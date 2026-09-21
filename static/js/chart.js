@@ -4,6 +4,11 @@
  * candlestick chart, drawing tools, and timeframe switching.
  */
 
+// Height of the TDI pane, persisted as a FRACTION of the two panes' combined
+// height rather than in pixels, so the split stays sensible when the density
+// toggle or the window changes how much height is available.
+const PANE_SPLIT_KEY = 'tradevue-pane-split';
+
 class TradingChart {
     constructor(containerId) {
         this.container = document.getElementById(containerId);
@@ -113,6 +118,9 @@ class TradingChart {
 
         // Handle resize
         this._handleResize();
+
+        // Draggable split between the price chart and the TDI pane
+        this._initSplitter();
     }
 
     /**
@@ -697,7 +705,169 @@ class TradingChart {
         const panel = this.container.parentElement ? this.container.parentElement.parentElement : this.container;
         const observer = new ResizeObserver(() => this._applySize());
         observer.observe(panel);
+        // Also watch the two panes themselves. Dragging the splitter changes
+        // THEIR boxes but not the panel's, so observing only the panel would
+        // miss it and the canvases would keep their old heights.
+        if (this.container.parentElement) observer.observe(this.container.parentElement);
+        if (this.rsiPaneEl) observer.observe(this.rsiPaneEl);
+        this._resizeObserver = observer;
         this._applySize();
+    }
+
+    /* ======================================================================
+       RESIZABLE SPLIT: price chart <-> TDI pane
+       ----------------------------------------------------------------------
+       Only the PANE's height is ever written. #chartContainer is flex:1 1 auto,
+       so the chart silently absorbs the difference and the combined height is
+       unchanged by construction - there is no arithmetic to get wrong and no
+       way for the two panes to fight each other.
+       ====================================================================== */
+
+    /** Total height shared by the two panes (excludes the fixed pane title). */
+    _splitTotal() {
+        const cc = (this.container && this.container.parentElement) || null;
+        return (cc ? cc.clientHeight : 0) + (this.rsiPaneEl ? this.rsiPaneEl.clientHeight : 0);
+    }
+
+    /**
+     * Clamp bounds for the pane, read from CSS `min-height` rather than
+     * hard-coded, so the density variants keep owning the real limits.
+     */
+    _splitLimits(total) {
+        const cc = (this.container && this.container.parentElement) || null;
+        const minChart = (cc && parseFloat(getComputedStyle(cc).minHeight)) || 140;
+        const minPane = (this.rsiPaneEl && parseFloat(getComputedStyle(this.rsiPaneEl).minHeight)) || 40;
+        // The 2px is slack for sub-pixel rounding: the clamp exists to stop the
+        // pane from pushing the grid row taller, so sitting exactly on the
+        // boundary is not good enough.
+        return { minPane: minPane, maxPane: Math.max(minPane, total - minChart - 2) };
+    }
+
+    /** Apply a pane height (px), leaving the shortfall to the chart. */
+    _setSplitPx(px, total) {
+        if (!this.rsiPaneEl) return;
+        const lim = this._splitLimits(total || this._splitTotal());
+        const h = Math.round(Math.min(Math.max(px, lim.minPane), lim.maxPane));
+        if (h === this._splitPx) return;
+        this._splitPx = h;
+        this.rsiPaneEl.style.height = h + 'px';
+        if (this.splitterEl) this.splitterEl.setAttribute('aria-valuenow', String(h));
+        this._applySize();
+        // One coalesced trailing pass. A TIMER, not requestAnimationFrame:
+        // rAF is paused in a background tab (measured previously) and a drag
+        // can outlive the tab losing focus.
+        if (!this._splitKick) {
+            this._splitKick = true;
+            setTimeout(() => { this._splitKick = false; this._applySize(); }, 80);
+        }
+    }
+
+    /** Re-apply the saved fraction (no-op when the user never set one). */
+    _applySplit() {
+        if (!this.rsiPaneEl) return;
+        let saved = NaN;
+        try { saved = parseFloat(localStorage.getItem(PANE_SPLIT_KEY)); } catch (e) { saved = NaN; }
+        if (!isFinite(saved) || saved <= 0 || saved >= 1) return;
+        const total = this._splitTotal();
+        if (total < 80) return;           // not laid out yet; a later pass will do it
+        this._splitPx = null;             // force the write
+        this._setSplitPx(saved * total, total);
+    }
+
+    /** Persist the current split as a fraction of the available height. */
+    _saveSplit() {
+        const total = this._splitTotal();
+        if (!total || !this.rsiPaneEl) return;
+        try {
+            localStorage.setItem(PANE_SPLIT_KEY, (this.rsiPaneEl.clientHeight / total).toFixed(4));
+        } catch (e) { /* private mode / quota - the split just will not persist */ }
+    }
+
+    /** Drop the custom split and hand the sizing back to CSS. */
+    resetSplit() {
+        try { localStorage.removeItem(PANE_SPLIT_KEY); } catch (e) { /* ignore */ }
+        if (this.rsiPaneEl) this.rsiPaneEl.style.height = '';
+        this._splitPx = null;
+        this._applySize();
+        setTimeout(() => this._applySize(), 60);
+    }
+
+    _initSplitter() {
+        const el = document.getElementById('paneSplitter');
+        if (!el || !this.rsiPaneEl || !this.container || !this.container.parentElement) return;
+        this.splitterEl = el;
+
+        let dragging = false, startY = 0, startPane = 0, total = 0;
+
+        const onMove = (e) => {
+            if (!dragging) return;
+            e.preventDefault();
+            // The handle sits BETWEEN the two panes, so the pane below it moves
+            // OPPOSITE to the pointer: dragging UP makes the pane taller, hence
+            // MINUS the delta. (Getting this backwards is easy - measured: a
+            // 90px upward drag shrank the pane 74 -> 40.)
+            this._setSplitPx(startPane - (e.clientY - startY), total);
+        };
+
+        const onEnd = () => {
+            if (!dragging) return;
+            dragging = false;
+            document.body.classList.remove('panes-resizing');
+            // The move/end listeners live on WINDOW while a drag is in progress
+            // (see pointerdown), so they must come off here or every later
+            // mouse move would keep resizing.
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onEnd);
+            window.removeEventListener('pointercancel', onEnd);
+            window.removeEventListener('blur', onEnd);
+            this._saveSplit();
+        };
+
+        el.addEventListener('pointerdown', (e) => {
+            if (e.button) return;
+            e.preventDefault();
+            dragging = true;
+            startY = e.clientY;
+            startPane = this.rsiPaneEl.clientHeight;
+            total = this._splitTotal();          // frozen for the whole drag
+            this._splitPx = startPane;
+            document.body.classList.add('panes-resizing');
+            // WINDOW, not the handle: as soon as the pointer moves it is nowhere
+            // near this 7px element, and setPointerCapture proved undependable
+            // here - measured, the drag itself worked but pointerup never
+            // reached the handle, so the split was never saved and the page was
+            // left stuck showing the resizing cursor.
+            window.addEventListener('pointermove', onMove);
+            window.addEventListener('pointerup', onEnd);
+            window.addEventListener('pointercancel', onEnd);
+            // A drag interrupted by the window losing focus would otherwise
+            // leave `panes-resizing` on the body forever.
+            window.addEventListener('blur', onEnd);
+        });
+
+        // Double-click restores the density's own proportions.
+        el.addEventListener('dblclick', () => this.resetSplit());
+
+        // Keyboard: the handle is focusable, so arrows nudge the split.
+        el.addEventListener('keydown', (e) => {
+            if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+            e.preventDefault();
+            const step = e.shiftKey ? 40 : 8;
+            this._splitPx = this.rsiPaneEl.clientHeight;
+            this._setSplitPx(this.rsiPaneEl.clientHeight + (e.key === 'ArrowDown' ? step : -step));
+            this._saveSplit();
+        });
+
+        // Re-apply the fraction whenever the layout's height changes (density
+        // switch, window resize, sidebar content growing). Safe to observe the
+        // panel: its height is set by the grid row, not by its own children, so
+        // reacting to it cannot feed back into it.
+        const panel = this.container.parentElement.parentElement;
+        if (panel && typeof ResizeObserver !== 'undefined') {
+            this._splitObserver = new ResizeObserver(() => this._applySplit());
+            this._splitObserver.observe(panel);
+        }
+        this._applySplit();
     }
 
     /**

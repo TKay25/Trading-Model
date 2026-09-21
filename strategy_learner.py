@@ -172,7 +172,10 @@ def _score(records, k_sl, k_tp, multiplier):
 
 
 def _reference_multiplier(records):
-    """The multiplier the group's trades actually used (most common)."""
+    """The multiplier the group's trades actually used (most common).
+
+    REPORTING ONLY - do not use this to size the group. See `_group_risk`.
+    """
     counts = {}
     for rec in records:
         m = rec.get("multiplier")
@@ -181,6 +184,32 @@ def _reference_multiplier(records):
     if not counts:
         return None
     return max(counts, key=lambda k: counts[k])
+
+
+def _median(vals):
+    vals = sorted(v for v in vals if v is not None)
+    if not vals:
+        return None
+    n = len(vals)
+    return vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2.0
+
+
+def _group_risk(k_sl, records):
+    """Median stop risk across a group, each record at ITS OWN multiplier.
+
+    This replaces charging the whole group one multiplier from
+    `_reference_multiplier`, which made every pooled group report
+    "unaffordable": pooling records across symbols mixes leverage from 40x to
+    400x, and taking the most common (400x, from the R_10/1HZ10V 1m trades)
+    charged every member 400x risk, so even a 1.0xATR stop blew the 20% cap that
+    1m is allowed. The live AutoTrader never works that way — it picks the
+    multiplier PER MARKET to fit that timeframe's budget — so the honest test is
+    whether the geometry fits the group's TYPICAL trade.
+    """
+    if not records:
+        return None
+    return _median([_risk_pct(k_sl, r.get("atr_pct"), r.get("multiplier"))
+                    for r in records])
 
 
 # ---------------------------------------------------------------------------
@@ -201,15 +230,20 @@ def _risk_cap(cfg, timeframe, default=0.80):
     return min(max(cap, 0.0), 0.98)
 
 
-def fit_group(records, cfg):
-    """Fit (k_sl, k_tp) for one (symbol, timeframe) group.
+def fit_group(records, cfg, timeframe=None):
+    """Fit (k_sl, k_tp) for one group of records.
+
+    `timeframe` is passed EXPLICITLY because fit_all also fits pooled groups
+    ("*|5m", "*|*") whose records carry mixed timeframes; the per-timeframe risk
+    cap must come from the group being fitted, not from records[0].
 
     Returns a decision dict. A group is only promoted when it has enough data,
     the fitted rule is out-of-sample positive, and it beats the current global
     defaults. Groups with enough data and no edge are proposed for pruning.
     """
     cfg = cfg or {}
-    max_risk = _risk_cap(cfg, records[0].get("timeframe") if records else None)
+    tf = timeframe if timeframe is not None else (records[0].get("timeframe") if records else None)
+    max_risk = _risk_cap(cfg, tf)
     cur_sl = float(cfg.get("sl_atr_k") or 1.5)
     cur_tp = float(cfg.get("tp_atr_k") or 6.0)
     mult = _reference_multiplier(records)
@@ -233,19 +267,21 @@ def fit_group(records, cfg):
 
     best = None
     for k_sl in K_SL_GRID:
-        risk = _risk_pct(k_sl, avg_atr, mult)
+        risk = _group_risk(k_sl, records)
         if risk is None or risk > max_risk:
             continue                      # would not be takeable live
         for k_tp in K_TP_GRID:
             if k_tp <= k_sl:
                 continue
-            sc = _score(fit_recs, k_sl, k_tp, mult)
+            # multiplier=None -> simulate() scores each trade at ITS OWN
+            # leverage, instead of charging the whole group one number.
+            sc = _score(fit_recs, k_sl, k_tp, None)
             if not sc or sc["n"] < max(5, MIN_TRADES // 3):
                 continue
             if best is None or sc["ev_pct"] > best[0]["ev_pct"]:
                 best = (sc, k_sl, k_tp, risk)
 
-    base = _score(fit_recs, cur_sl, cur_tp, mult)
+    base = _score(fit_recs, cur_sl, cur_tp, None)
     decision["baseline_ev_pct"] = round(base["ev_pct"], 4) if base else None
 
     if best is None:
@@ -254,7 +290,7 @@ def fit_group(records, cfg):
         return decision
 
     sc, k_sl, k_tp, risk = best
-    oos = _score(oos_recs, k_sl, k_tp, mult) if len(oos_recs) >= MIN_OOS_TRADES else None
+    oos = _score(oos_recs, k_sl, k_tp, None) if len(oos_recs) >= MIN_OOS_TRADES else None
     decision.update(
         proposed={"sl_atr_k": k_sl, "tp_atr_k": k_tp},
         fit_ev_pct=round(sc["ev_pct"], 4),
@@ -292,24 +328,71 @@ def fit_group(records, cfg):
 
 
 def fit_all(records=None, cfg=None):
-    """Fit every (symbol, timeframe) group present in the data."""
+    """Fit the exit geometry, POOLING when a single market has too little data.
+
+    Three levels, most specific first:
+      "SYMBOL|tf"   one market on its own         (needs MIN_TRADES by itself)
+      "*|tf"        one timeframe, all symbols pooled
+      "*|*"         every market and timeframe pooled
+
+    The original code had ONLY the first level. With ~205 closed path records
+    spread over 40 (symbol x timeframe) pairs, no group ever reached
+    MIN_TRADES=30, so EVERY group reported "insufficient_data" forever — the
+    learner advertised itself as running (`learning: true`, `/api/strategy`
+    returning 200) while it had never once changed a parameter. Pooling lets it
+    answer the question the data can actually support — "which TIMEFRAME pays" —
+    which is exactly what exit_study.json measures independently (5m +18.2 and
+    15m +22.1 positive, 30m negative under EVERY rule tested).
+
+    A group is fitted at the most specific level that has enough data. Keys are
+    resolved most-specific-first at lookup time, so a per-market fit always beats
+    a pooled one and a pooled prune never overrides a promoted market.
+    """
     records = load_records() if records is None else records
-    groups = {}
-    for rec in records:
-        key = f"{rec.get('symbol')}|{rec.get('timeframe')}"
-        groups.setdefault(key, []).append(rec)
+
+    def bucket(keyfn):
+        out = {}
+        for rec in records:
+            out.setdefault(keyfn(rec), []).append(rec)
+        return out
 
     decisions = {}
-    for key, recs in sorted(groups.items()):
-        decisions[key] = fit_group(recs, cfg)
+
+    def fit_level(groups, pooled):
+        for key, recs in sorted(groups.items()):
+            if key in decisions:
+                continue
+            tf = key.split("|", 1)[1] if "|" in key else None
+            d = fit_group(recs, cfg, timeframe=(None if tf in (None, "*") else tf))
+            d["pooled"] = pooled
+            d["key"] = key
+            # A market with too little data is deliberately left UNDECIDED here so
+            # the pooled level can serve it instead of reporting a dead end.
+            if d.get("status") == "insufficient_data" and not pooled:
+                continue
+            decisions[key] = d
+
+    fit_level(bucket(lambda r: f"{r.get('symbol')}|{r.get('timeframe')}"), False)
+    fit_level(bucket(lambda r: f"*|{r.get('timeframe')}"), True)
+    fit_level(bucket(lambda r: "*|*"), True)
+
     promoted = {k: v for k, v in decisions.items() if v.get("status") == "promote"}
-    pruned = {k: v for k, v in decisions.items() if v.get("status") == "prune"}
+    # "*|*" is a verdict about the ENTIRE book, so it must NEVER become a blanket
+    # prune: every lookup would match it and the bot would silently stop trading
+    # altogether (caught in _test_learner_pool.py, where is_pruned returned True
+    # for arbitrary pairs like "NOPE|9m"). It is reported as `global_verdict`
+    # instead, so a human sees it and decides. A "*|tf" prune IS applied - it
+    # speaks about one timeframe, which is the learner's actual mandate.
+    pruned = {k: v for k, v in decisions.items()
+              if v.get("status") == "prune" and k != "*|*"}
+    global_verdict = (decisions.get("*|*") or {}).get("status")
     return {
         "generated_at": time.time(),
         "records": len(records),
         "groups": decisions,
         "params": {k: v["proposed"] for k, v in promoted.items()},
         "skip": sorted(pruned.keys()),
+        "global_verdict": global_verdict,
         "thresholds": {"min_trades": MIN_TRADES, "min_oos_trades": MIN_OOS_TRADES,
                        "oos_fraction": OOS_FRACTION, "beat_margin": BEAT_MARGIN},
     }
@@ -358,14 +441,35 @@ class StrategyLearner:
             logger.warning("learner: could not save params (%r)", e)
 
     # ---- lookups used by the AutoTrader ----
+    @staticmethod
+    def _resolve(table, symbol, timeframe, default=None):
+        """Most specific key first: SYMBOL|tf, then *|tf, then *|*.
+
+        Mirrors fit_all's pooling. Without this a pooled fit would be written but
+        never READ, because the trader asks for exactly "SYMBOL|tf" — the same
+        silent-no-op shape as the rest of this file's history.
+        """
+        for k in (f"{symbol}|{timeframe}", f"*|{timeframe}", "*|*"):
+            if k in table:
+                return table[k]
+        return default
+
     def params_for(self, symbol, timeframe):
         """Fitted parameters for a market, or None to use the global defaults."""
         with self._lock:
-            return self._params.get(f"{symbol}|{timeframe}")
+            return self._resolve(self._params, symbol, timeframe)
 
     def is_pruned(self, symbol, timeframe):
         with self._lock:
-            return f"{symbol}|{timeframe}" in self._skip
+            # A market is only pruned when nothing more specific was promoted for
+            # it, so a good market-level fit always overrides a pooled prune.
+            if self._resolve(self._params, symbol, timeframe):
+                return False
+            # NOTE: "*|*" is deliberately absent here. It means "the whole book
+            # has no edge" — a human decision, not a licence to refuse every
+            # market (fit_all keeps it out of `skip` for the same reason).
+            return any(k in self._skip
+                       for k in (f"{symbol}|{timeframe}", f"*|{timeframe}"))
 
     def get_applied(self):
         """What the bot is actually using right now (vs what the last fit said)."""

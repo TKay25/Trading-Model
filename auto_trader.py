@@ -230,6 +230,21 @@ class AutoTrader:
             # change k_sl/k_tp and prune markets — never leverage, risk limits,
             # stake or the on/off switch. false = freeze learning.
             "learning": True,
+            # NATIVE (EXCHANGE-SIDE) SL/TP — the single most important fix
+            # (2026-09-21). Attaches the stop and target to the CONTRACT via
+            # Deriv's `contract_update`, so enforcement no longer depends on our
+            # 2s polling loop. Why this outranks any parameter change: of 1330
+            # settled trades, 30.8% died at Deriv's own -100% close, which fires
+            # ONLY when our stop was never armed, and 1096 of 1330 had no exit
+            # attribution at all (the monitor never managed them). The SAME
+            # entries with the stop actually enforced were +8.66%/trade in
+            # exit_study.json against -8.6%/trade live — an identical 36.8% win
+            # rate, so the gap is execution, not signal. Native limits also
+            # remove the -22%..-27% overshoot measured on a -20% stop (poll lag)
+            # and the proposal_open_contract quota dependency.
+            # The position monitor STAYS ON as a backstop and remains the thing
+            # that records MAE/MFE for the learner. false = monitor-only again.
+            "native_sl_tp": True,
             # STRICT FLIP (user rule 2026-09-20): when a position is closed by a
             # reversal on (symbol, timeframe), the ONLY opening allowed on that
             # symbol in that cycle is the opposite direction on that SAME
@@ -257,6 +272,10 @@ class AutoTrader:
         self._cooldown = {}        # (symbol, tf) -> last OPEN ts
         self._exit_cooldown = {}   # (symbol, direction, tf) -> last close ts
         self._last_adopt = None    # last time we adopted untracked positions
+        # Contract ids already given NATIVE (exchange-side) SL/TP, so the mirror
+        # sweep sends `contract_update` once per position instead of every sweep.
+        # A rejection is deliberately NOT recorded, so it retries next time.
+        self._native_done = set()
         self._skip_reasons = collections.Counter()   # why this cycle refused to trade
         self._last_cycle = {"at": None, "opened": [], "closed": [], "scan": 0,
                             "message": "not started"}
@@ -278,7 +297,7 @@ class AutoTrader:
                       "max_risk_pct", "risk_by_tf", "stop_loss_pct", "take_profit_pct",
                       "break_even_enabled", "break_even_pct",
                       "trail_enabled", "trail_pct",
-                      "adopt_mode"):
+                      "adopt_mode", "native_sl_tp"):
                 if k in kw:
                     self._cfg[k] = kw[k]
             cfg = dict(self._cfg)
@@ -1032,6 +1051,9 @@ class AutoTrader:
             })
             self._record_trade(cid, symbol, contract_type, stake, multiplier, sl, tp,
                                hit["tf"], hit.get("str"))
+            if cfg.get("native_sl_tp", True):
+                if self._apply_native_limits(cid, sl, tp, stake, symbol):
+                    self._native_done.add(cid)
             logger.info("Auto-trade opened %s %s @ %s%% lot=%.3f mult=%s -> cid=%s "
                         "SL=$%.2f TP=$%.2f [%s stop %.2f%% of price = %.1fx ATR, risk %.1f%% of stake]",
                         direction, symbol, hit["str"], stake, multiplier, cid, sl, tp,
@@ -1042,6 +1064,54 @@ class AutoTrader:
         logger.warning("Auto-trade rejected for %s: %s", symbol, result)
         self._skip_reasons["deriv_rejected"] += 1
         return False
+
+    def _apply_native_limits(self, cid, sl, tp, stake, symbol=""):
+        """Put the stop/target ON THE CONTRACT (Deriv `contract_update`).
+
+        Envelope, units and limits verified live in `_probe_update.py`:
+          {"contract_update": 1, "contract_id": int,
+           "limit_order": {"stop_loss": <positive $>, "take_profit": <positive $>}}
+        `stop_loss`/`take_profit` are POSITIVE amounts; the response echoes the
+        stop SIGNED, so a response value must never be fed back in.
+
+        Failures are LOUD but non-fatal: the position monitor is still running as
+        the backstop, so a rejected limit degrades to the old behaviour rather
+        than leaving the position bare. The clamp below avoids the two documented
+        rejections (`LimitOrderAmountTooLow` under 0.10, and anything above the
+        stake, where Deriv's own -100% "stop_out" already sits).
+        """
+        if not sl and not tp:
+            return False
+        limit = {}
+        try:
+            if sl:
+                limit["stop_loss"] = round(max(0.10, min(float(sl), float(stake) * 0.98)), 2)
+            if tp:
+                limit["take_profit"] = round(max(0.10, float(tp)), 2)
+        except (TypeError, ValueError):
+            return False
+
+        async def _upd(api):
+            return await api.update_contract_limits(
+                cid, limit.get("stop_loss"), limit.get("take_profit"))
+
+        try:
+            res = self._call(_upd, authenticated=True, timeout=25)
+        except Exception as e:
+            logger.warning("Native SL/TP call failed for %s %s: %r "
+                           "(monitor still enforcing)", symbol, cid, e)
+            return False
+        if isinstance(res, dict) and res.get("error"):
+            err = res["error"]
+            logger.warning("Native SL/TP REJECTED for %s %s: %s (monitor still "
+                           "enforcing)", symbol, cid,
+                           err.get("message") if isinstance(err, dict) else err)
+            return False
+        logger.info("Native SL/TP SET on %s %s: stop_loss=$%.2f take_profit=$%.2f "
+                    "(Deriv now enforces these; the monitor is the backstop and "
+                    "records the P/L path)", symbol, cid,
+                    limit.get("stop_loss") or 0.0, limit.get("take_profit") or 0.0)
+        return True
 
     def _ledger_multiplier(self, contract_id):
         try:
@@ -1149,6 +1219,37 @@ class AutoTrader:
         contracts = pt.get("contracts", []) if isinstance(pt, dict) else []
         pending = [c for c in contracts
                    if c.get("contract_id") and not self._tracked_by_monitor(c.get("contract_id"))]
+
+        # MIRROR native limits onto positions the monitor ALREADY protects.
+        # Without this the sweep only ever helps UNTRACKED positions, so the ~28
+        # restored at boot (and everything opened before this feature existed)
+        # would keep monitor-only protection — i.e. they lose their stop the
+        # moment this process dies, which is the exact failure mode native limits
+        # exist to remove.
+        # Capped per sweep: a rejected contract stays out of `_native_done` and is
+        # retried next time, and bursting ~30 contract_update calls at once is how
+        # this account's quotas get exhausted (see the proposal_open_contract
+        # rate-limit notes). 8/sweep = every position covered within ~20 minutes.
+        mirrored, NATIVE_PER_SWEEP = 0, 8
+        if cfg.get("native_sl_tp", True):
+            for c in contracts:
+                if mirrored >= NATIVE_PER_SWEEP:
+                    break
+                cid = c.get("contract_id")
+                if not cid or cid in self._native_done:
+                    continue
+                lim = self._pm.limits_for(cid)
+                if not lim or not (lim["stop_loss"] or lim["take_profit"]):
+                    continue
+                if self._apply_native_limits(cid, lim["stop_loss"], lim["take_profit"],
+                                             lim.get("stake") or cfg.get("stake") or 1.0,
+                                             lim.get("symbol") or ""):
+                    self._native_done.add(cid)
+                    mirrored += 1
+            if mirrored:
+                logger.info("Auto-trader mirrored native SL/TP onto %d already-protected "
+                            "position(s) (Deriv enforces them now without our polling loop)",
+                            mirrored)
         if not pending:
             return 0
         # Use each position's OWN timeframe (from the ledger) for its ATR — see
@@ -1209,6 +1310,8 @@ class AutoTrader:
                 "adopted": True,
                 "atr_pct": (round(float(atrs[(sym, tf)]), 4) if atrs.get((sym, tf)) else None),
             })
+            if cfg.get("native_sl_tp", True):
+                self._apply_native_limits(cid, sl, tp, stake, sym)
             adopted += 1
         if unprotected:
             logger.warning(

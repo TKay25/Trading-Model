@@ -338,6 +338,45 @@ class DerivAPI:
         }
         return await self._send_request(sell_req)
 
+    async def update_contract_limits(self, contract_id, stop_loss=None, take_profit=None):
+        """Attach a NATIVE stop-loss / take-profit to an OPEN contract.
+
+        VERIFIED against the live API (see `_probe_update.py`):
+          * the envelope IS the legacy one — `{"contract_update": 1,
+            "contract_id": <int>, "limit_order": {...}}`. The object form
+            (`contract_update: {contract_id, limit_order}`) and the flat form
+            (`contract_update: 1` + top-level stop_loss/take_profit) are both
+            rejected with `InputValidationFailed`, so this is measured, not guessed.
+          * `stop_loss` / `take_profit` are POSITIVE dollar amounts. The response
+            echoes stop_loss SIGNED (`order_amount: -0.30` for a `+0.30` request),
+            so never feed a response value straight back in.
+          * the legal range is per-contract and comes back in the POC payload as
+            `validation_params.stop_loss.{min,max}` / `.take_profit.{min,max}`.
+            `stop_loss.max` is bounded by the stake because Deriv already closes
+            the position at -100% ("stop_out", and `is_valid_to_update.stop_out`
+            is 0 = not updatable). Sending less than the 0.10 minimum returns
+            `LimitOrderAmountTooLow`.
+
+        Setting these removes the dependency on our own polling loop for
+        enforcement: no proposal_open_contract quota, no 2s-lag overshoot
+        (measured -22%..-27% against a -20% stop), no restart orphans and no
+        monitor-thread-death class of failure.
+        """
+        if not self._authenticated:
+            raise PermissionError("Not authenticated. Please provide API token.")
+        limit_order = {}
+        if stop_loss is not None:
+            limit_order["stop_loss"] = float(stop_loss)
+        if take_profit is not None:
+            limit_order["take_profit"] = float(take_profit)
+        if not limit_order:
+            return {"error": {"message": "no limit order given"}}
+        return await self._send_request({
+            "contract_update": 1,
+            "contract_id": int(contract_id),
+            "limit_order": limit_order,
+        })
+
     async def get_portfolio(self):
         """Get current portfolio of open positions."""
         if not self._authenticated:

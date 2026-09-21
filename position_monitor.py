@@ -336,6 +336,26 @@ class PositionMonitor:
         with self._lock:
             return int(contract_id) in self._limits
 
+    def limits_for(self, contract_id):
+        """The enforced geometry for one contract, or None when untracked.
+
+        Lets the AutoTrader MIRROR the monitor's stop/target onto the contract
+        itself via Deriv's `contract_update`, so protection survives this process
+        dying. Returns the ORIGINAL -stop_loss / +take_profit deliberately:
+        `stop` is the RATCHETED level (break-even / trailing), a moving target
+        that only the monitor can follow as profit grows. Copying that onto the
+        contract would freeze the position at a level it has already passed.
+        """
+        with self._lock:
+            lim = self._limits.get(int(contract_id))
+            if not lim:
+                return None
+            rec = lim.get("rec") or {}
+            return {"symbol": lim.get("symbol") or "",
+                    "stop_loss": float(lim.get("stop_loss") or 0),
+                    "take_profit": float(lim.get("take_profit") or 0),
+                    "stake": float(rec.get("stake") or 0)}
+
     def tracked_ids(self):
         with self._lock:
             return list(self._limits)

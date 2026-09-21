@@ -2086,7 +2086,7 @@ input[type="checkbox"] { accent-color: var(--accent); }
 
 /* ---------- Charts: the single biggest height consumer ---------- */
 [data-density="compact"] .dashboard-grid { gap: 9px; grid-template-columns: minmax(0,1fr) 320px; }
-[data-density="compact"] #chartContainer { flex-basis: 288px; min-height: 240px; }
+[data-density="compact"] #chartContainer { min-height: 240px; }
 [data-density="compact"] #rsiPane { height: 74px; }
 [data-density="compact"] .chart-panel { border-radius: 8px; }
 [data-density="compact"] .chart-toolbar { padding: 5px 8px; margin-bottom: 8px; gap: 8px; border-radius: 8px; }
@@ -2229,9 +2229,78 @@ input[type="checkbox"] { accent-color: var(--accent); }
 }
 #chartContainer {
     height: auto;
-    flex: 1 1 auto;
+    /* flex-basis 0 (NOT auto): with `auto` the base size follows the content,
+       i.e. the height lightweight-charts writes on its own inner div. That made
+       the column's content height grow whenever the TDI pane grew, which pushed
+       the grid ROW taller and dragged the sidebar up with it (measured: pane
+       174px -> row 593->603). With a 0 basis the content is ignored and the
+       floor becomes the fixed min-height - which is exactly what chart.js
+       reads to clamp a drag, so the two can no longer disagree. */
+    flex: 1 1 0;
     min-height: 200px;
     position: relative;
 }
 #tradingChart { height: 100%; }
 .rsi-pane { flex: 0 0 auto; }
+
+/* ============================================================================
+   RESIZABLE TDI / INDICATOR PANE
+   ----------------------------------------------------------------------------
+   A drag handle between the price chart and the TDI pane. Dragging moves the
+   SPLIT, never the total: #chartContainer is flex:1 1 auto, so every pixel the
+   pane gains is taken straight out of the chart and the panel's own height is
+   untouched.
+   The LIMITS live here (min-height) and chart.js READS them, so the pane can
+   never be dragged to a size that would grow the grid row - which is what
+   turned the earlier `flex: 1` attempt into a runaway layout.
+   ============================================================================ */
+.pane-splitter {
+    flex: 0 0 auto;
+    height: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface-2);
+    cursor: row-resize;
+    /* Without this a touch drag scrolls the page instead of moving the split. */
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: background 0.15s ease;
+}
+
+.pane-splitter::after {
+    content: "";
+    width: 42px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border-strong);
+    transition: background 0.15s ease, width 0.15s ease;
+}
+
+.pane-splitter:hover,
+body.panes-resizing .pane-splitter { background: var(--hover-tint); }
+
+.pane-splitter:hover::after,
+.pane-splitter:focus-visible::after,
+body.panes-resizing .pane-splitter::after {
+    background: var(--accent-2);
+    width: 64px;
+}
+
+.pane-splitter:focus-visible { outline: none; }
+.pane-splitter:focus-visible::after { box-shadow: 0 0 0 3px var(--ring); }
+
+/* While dragging: keep the resize cursor even when the pointer leaves the 7px
+   handle (and the chart canvas would otherwise show its crosshair cursor), and
+   suppress text selection across the page. */
+body.panes-resizing,
+body.panes-resizing * { cursor: row-resize !important; }
+body.panes-resizing * { user-select: none; -webkit-user-select: none; }
+
+/* Floor for the pane, read by chart.js as the clamp for a drag. Not lower:
+   the pane's canvas is its height minus ~28px of time axis, so 40px left only
+   a 12px strip of indicator (measured). */
+#rsiPane { min-height: 48px; }
+
+[data-density="compact"] .pane-splitter { height: 6px; }
