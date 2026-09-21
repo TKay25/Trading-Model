@@ -1,0 +1,30 @@
+﻿closed path records with an excursion envelope: 229
+
+missing take_profit on 0 record(s)
+
+ACTUAL net over these records      : -7.19  (-0.031/trade)
+PROJECTED under lot + break-even   : -76.41  (-0.334/trade)
+  difference                       : -69.22
+
+RESCUE RATE: 134/229 = 59% ticked positive (break-even rescues them)
+  never ticked up -> -lot : 83 (36%)
+  reached the target      : 12 (5%)
+
+--- by timeframe (actual -> projected) ---
+        1m n= 95  -0.061 -> -0.396   rescue  43%  lot  45%
+       30m n= 31  +0.212 -> -0.323   rescue  68%  lot  32%
+        5m n= 44  +0.001 -> -0.223   rescue  73%  lot  25%
+       15m n= 53  -0.133 -> -0.245   rescue  75%  lot  25%
+        1h n=  6  -0.160 -> -1.000   rescue   0%  lot 100%
+
+--- by symbol (worst projected first) ---
+      R_100 n= 24  +0.121 -> -0.500   rescue  50%  lot  50%
+     1HZ10V n= 26  -0.137 -> -0.423   rescue  58%  lot  42%
+     1HZ25V n= 21  -0.108 -> -0.412   rescue  38%  lot  48%
+       R_25 n= 20  -0.022 -> -0.400   rescue  60%  lot  40%
+       R_50 n= 16  +0.022 -> -0.336   rescue  31%  lot  44%
+     1HZ50V n= 25  +0.080 -> -0.312   rescue  60%  lot  36%
+     1HZ75V n= 25  -0.037 -> -0.280   rescue  72%  lot  28%
+    1HZ100V n= 30  -0.186 -> -0.267   rescue  73%  lot  27%
+       R_10 n= 25  +0.142 -> -0.216   rescue  64%  lot  28%
+       R_75 n= 17  -0.188 -> -0.186   rescue  65%  lot  24%

@@ -1569,8 +1569,13 @@ body {
 }
 .auto-num:focus { outline: none; border-color: var(--accent, #22d3ee); }
 .auto-select { width: auto; min-width: 104px; padding-right: 4px; }
+/* Which exit-mode inputs are relevant.
+   In LOT mode the Nx ATR inputs stay VISIBLE on purpose: sl_atr_k still sets the
+   multiplier ceiling (and therefore how far away in PRICE the -100% close sits),
+   and tp_atr_k is still the take profit. Only the % -of-stake pair is unused. */
 .auto-trade-box[data-stop-mode="atr"] .stake-only,
-.auto-trade-box[data-stop-mode="stake"] .atr-only { display: none; }
+.auto-trade-box[data-stop-mode="stake"] .atr-only,
+.auto-trade-box[data-stop-mode="lot"] .stake-only { display: none; }
 
 /* A timeframe that cannot be traded at all (no affordable stop at any valid
    multiplier) — shown greyed rather than as an active toggle. */

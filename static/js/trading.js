@@ -165,15 +165,37 @@ class TradingControls {
             hasEnvToken = !!cfg.has_token;
         } catch (_) {}
         if (!hasEnvToken) return;
-        await this._performConnect('');
+
+        // RETRY WITH BACKOFF (2026-09-21). This used to run ONCE, on
+        // DOMContentLoaded. A single failure — the network changing while the
+        // page happened to be loading, or the OTP flow timing out during a
+        // restart — left the dashboard showing "Offline" FOREVER while the bot
+        // kept trading normally, which reads exactly like "the system is down".
+        // Observed live: the badge sat on Offline for hours after a LAN->WiFi
+        // switch, even though /api/connect returned 200 the moment it was tried
+        // again. Nothing retried, so the only recovery was a manual Connect.
+        // Retries are QUIET (no toast spam); we announce the recovery once.
+        let delay = 4000;
+        for (let attempt = 1; attempt <= 30 && !this.authenticated; attempt++) {
+            await this._performConnect('', attempt > 1);
+            if (this.authenticated) {
+                if (attempt > 1) {
+                    this._showToast('Reconnected',
+                        'Deriv session restored automatically after a drop.');
+                }
+                return;
+            }
+            await new Promise(r => setTimeout(r, delay));
+            delay = Math.min(delay * 2, 60000);   // cap at a request a minute
+        }
     }
 
     /**
      * Run the actual /api/connect flow with a given token and update the UI.
      */
-    async _performConnect(token) {
+    async _performConnect(token, quiet) {
         this.apiToken = token || '';
-        this._showToast('Connecting', 'Connecting to Deriv API...');
+        if (!quiet) this._showToast('Connecting', 'Connecting to Deriv API...');
         try {
             const response = await fetch('/api/connect', {
                 method: 'POST',
@@ -199,11 +221,11 @@ class TradingControls {
                     `Logged in as ${data.loginid} | Balance: $${data.balance.toFixed(2)}`
                 );
             } else {
-                this._showToast('Connection Failed', data.error || 'Authentication failed');
+                if (!quiet) this._showToast('Connection Failed', data.error || 'Authentication failed');
                 this._updateConnectionUI(false);
             }
         } catch (err) {
-            this._showToast('Connection Error', 'Failed to connect: ' + err.message);
+            if (!quiet) this._showToast('Connection Error', 'Failed to connect: ' + err.message);
             this._updateConnectionUI(false);
         }
     }

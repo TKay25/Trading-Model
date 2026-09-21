@@ -204,7 +204,7 @@ class TradingDashboardApp {
         if (this.autoTpPct) this.autoTpPct.addEventListener('change', () => { this._updateAutoExitHint(); this._syncAutoConfig(); });
         if (this.autoSlPct) this.autoSlPct.addEventListener('input', () => this._updateAutoExitHint());
         if (this.autoTpPct) this.autoTpPct.addEventListener('input', () => this._updateAutoExitHint());
-        if (this.autoStopMode) this.autoStopMode.addEventListener('change', () => { this._applyStopMode(); this._syncAutoConfig(); });
+        if (this.autoStopMode) this.autoStopMode.addEventListener('change', () => { this._applyStopMode(); this._updateAutoExitHint(); this._syncAutoConfig(); });
         if (this.autoSlK) this.autoSlK.addEventListener('change', () => { this._updateAutoExitHint(); this._syncAutoConfig(); });
         if (this.autoTpK) this.autoTpK.addEventListener('change', () => { this._updateAutoExitHint(); this._syncAutoConfig(); });
         if (this.autoSlK) this.autoSlK.addEventListener('input', () => this._updateAutoExitHint());
@@ -260,6 +260,20 @@ class TradingDashboardApp {
         if (!this.autoExitHint) return;
         const stake = parseFloat((document.getElementById('tradeLotSize') || {}).value) || 1;
         const mode = (this.autoStopMode && this.autoStopMode.value) || 'atr';
+        if (mode === 'lot') {
+            // LOT mode: the maximum loss is the whole lot and the ONLY adjustment
+            // is at break-even, so a trade ends at -lot or at ~0 and nothing else.
+            // The Nx ATR inputs are still meaningful: sl_atr_k sets the multiplier
+            // ceiling, which is what keeps the -100% close out of the noise, and
+            // tp_atr_k is still the target.
+            const kSlL = parseFloat(this.autoSlK && this.autoSlK.value) || this._exitCfg.sl_atr_k;
+            const kTpL = parseFloat(this.autoTpK && this.autoTpK.value) || this._exitCfg.tp_atr_k;
+            this.autoExitHint.textContent =
+                `Max loss = the full lot ($${stake.toFixed(2)}). The stop moves only at `
+                + `break-even, so each trade ends at -$${stake.toFixed(2)} or ~$0. `
+                + `Target ${kTpL}x ATR; ${kSlL}x ATR keeps the -100% close outside normal noise.`;
+            return;
+        }
         if (mode === 'atr') {
             const kSl = parseFloat(this.autoSlK && this.autoSlK.value) || this._exitCfg.sl_atr_k;
             const kTp = parseFloat(this.autoTpK && this.autoTpK.value) || this._exitCfg.tp_atr_k;
@@ -426,7 +440,12 @@ class TradingDashboardApp {
         // typo must never silently disable the stop).
         if (!Number.isNaN(slPct)) body.stop_loss_pct = slPct / 100;
         if (!Number.isNaN(tpPct)) body.take_profit_pct = tpPct / 100;
-        if (this.autoStopMode) body.stop_mode = this.autoStopMode.value;
+        // Only push a mode the select can actually represent. A <select> whose
+        // value has no matching <option> reports "", and posting that over the
+        // server's config silently reset the exit mode (observed: the server held
+        // stop_mode "lot" and the page wrote "" back over it every poll, dropping
+        // the bot into the legacy stake mode).
+        if (this.autoStopMode && this.autoStopMode.value) body.stop_mode = this.autoStopMode.value;
         const slK = parseFloat(this.autoSlK && this.autoSlK.value);
         const tpK = parseFloat(this.autoTpK && this.autoTpK.value);
         if (!Number.isNaN(slK) && slK > 0) body.sl_atr_k = slK;
@@ -1104,14 +1123,61 @@ class TradingDashboardApp {
         }
     }
 
+    /**
+     * ATR% of the last 14 bars, mean (high-low)/close.
+     * Local to the backtest so it needs no extra dependency; mirrors the
+     * formula auto_trader._atr_pct uses server-side.
+     */
+    _atrPctLocal(candles) {
+        const p = 14, n = candles.length;
+        if (n < p + 1) return null;
+        let sum = 0, cnt = 0;
+        for (let i = n - p; i < n; i++) {
+            const hi = parseFloat(candles[i].high);
+            const lo = parseFloat(candles[i].low);
+            const cl = parseFloat(candles[i].close);
+            if (!isFinite(hi) || !isFinite(lo) || !cl) continue;
+            sum += (hi - lo) / cl * 100;
+            cnt++;
+        }
+        return cnt ? sum / cnt : null;
+    }
+
+    /**
+     * Walk the last ~400 bars through the REAL signal engine and score each
+     * signal with the REAL exit geometry.
+     *
+     * The old version compared the close 8 bars later and reported how often the
+     * price had moved the right way. That is NOT a profitability test, and with
+     * this strategy it is actively misleading: the stop is 1.5xATR and the target
+     * 6xATR, so an 8-bar window (40 min on 5m) can reach the stop easily and the
+     * target almost never — a near coin-flip direction score can therefore sit on
+     * top of a losing book. Measured live: 52% of trades exit at the stop and only
+     * 4.7% at the target, which is exactly why realized (35.6%) is far below
+     * directional.
+     *
+     * So each signal is now also walked FORWARD bar by bar on the real high/low
+     * path, with the stop and target taken from the LIVE server config
+     * (`_exitCfg`), and the outcome reported in R multiples (1R = the stop
+     * distance). R is multiplier-independent and directly comparable to
+     * exit_study.py. The STOP is checked before the target inside a bar —
+     * conservative, the same convention the study uses.
+     */
     _walkForward(candles) {
         const n = candles.length;
-        const lookahead = 8;
+        const LOOKAHEAD = 8;      // bars, for the directional score (unchanged)
+        const HORIZON = 50;       // bars allowed to reach stop/target (as exit_study)
         const win = candles.slice(Math.max(50, n - 400)); // last ~400 bars
         const m = win.length;
+        const kSl = parseFloat(this._exitCfg && this._exitCfg.sl_atr_k) || 1.5;
+        const kTp = parseFloat(this._exitCfg && this._exitCfg.tp_atr_k) || 6.0;
+
         let signals = 0, wins = 0, buys = 0, sells = 0;
         const moves = [];
-        for (let i = 50; i < m - lookahead; i += 2) { // stride 2 for speed
+        const rs = [];
+        let nStop = 0, nTarget = 0, nTimeout = 0;
+
+        for (let i = 50; i < m - HORIZON; i += 2) { // stride 2 for speed
             const sub = win.slice(0, i + 1);
             const tdi = this.tdi.calculate(sub);
             if (!tdi) continue;
@@ -1119,19 +1185,55 @@ class TradingDashboardApp {
             const signal = this.signalEngine.generate(tdi, patterns, sub, { stake: 1, payoutRatio: this._payoutRatio });
             const action = signal.action;
             if (action !== 'BUY' && action !== 'SELL') continue;
+
             const entry = parseFloat(sub[sub.length - 1].close);
-            const exit = parseFloat(win[i + lookahead].close);
+            signals++;
+            if (action === 'BUY') buys++; else sells++;
+
+            // --- directional score (the previous behaviour, kept for continuity) ---
+            const exit = parseFloat(win[i + LOOKAHEAD].close);
             const move = ((exit - entry) / entry) * 100;
             const won = (action === 'BUY' && move > 0) || (action === 'SELL' && move < 0);
-            signals++;
             if (won) wins++;
-            if (action === 'BUY') buys++; else sells++;
             moves.push(Math.abs(move));
+
+            // --- R score, using the live exit geometry ---
+            const atr = this._atrPctLocal(sub);
+            if (!atr || atr <= 0) continue;
+            const stopPct = kSl * atr;
+            const tpPct = kTp * atr;
+            let R = null, kind = 'timeout';
+            for (let j = i + 1; j < Math.min(i + 1 + HORIZON, m); j++) {
+                const hi = parseFloat(win[j].high);
+                const lo = parseFloat(win[j].low);
+                if (!isFinite(hi) || !isFinite(lo)) continue;
+                const up = action === 'BUY' ? (hi - entry) / entry * 100 : (entry - lo) / entry * 100;
+                const dn = action === 'BUY' ? (entry - lo) / entry * 100 : (hi - entry) / entry * 100;
+                if (dn >= stopPct) { R = -1; kind = 'stop'; break; }   // stop FIRST = conservative
+                if (up >= tpPct) { R = kTp / kSl; kind = 'target'; break; }
+            }
+            if (R === null) {
+                // Neither level inside the horizon: mark it at wherever it ended.
+                const last = parseFloat(win[Math.min(i + HORIZON, m - 1)].close);
+                const signed = action === 'BUY' ? (last - entry) / entry * 100 : (entry - last) / entry * 100;
+                R = signed / stopPct;
+            }
+            rs.push(R);
+            if (kind === 'stop') nStop++; else if (kind === 'target') nTarget++; else nTimeout++;
         }
+
+        const mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+        const tot = rs.length || 1;
         return {
             signals, wins, buys, sells,
             winRate: signals ? Math.round(wins / signals * 100) : 0,
-            avgMove: moves.length ? moves.reduce((s, v) => s + v, 0) / moves.length : 0,
+            avgMove: mean(moves),
+            rN: rs.length,
+            expectancyR: mean(rs),
+            stopRate: rs.length ? Math.round(nStop / tot * 100) : 0,
+            targetRate: rs.length ? Math.round(nTarget / tot * 100) : 0,
+            timeoutRate: rs.length ? Math.round(nTimeout / tot * 100) : 0,
+            kSl, kTp, horizon: HORIZON,
         };
     }
 
@@ -1144,13 +1246,21 @@ class TradingDashboardApp {
             return;
         }
         box.className = 'backtest-box';
+        const rCls = res.expectancyR > 0.05 ? 'pos' : (res.expectancyR < -0.05 ? 'neg' : '');
+        const rTxt = res.rN ? (res.expectancyR >= 0 ? '+' : '') + res.expectancyR.toFixed(3) + 'R' : '—';
         box.innerHTML = `
             <div class="backtest-title"><i class="bi bi-cpu"></i> Backtest — ${this.symbol} ${this.timeframe}</div>
             <div class="backtest-stats">
                 <span>Signals: <b>${res.signals}</b></span>
                 <span>BUY: <b>${res.buys}</b> · SELL: <b>${res.sells}</b></span>
-                <span>Win rate: <b class="${res.winRate >= 50 ? 'pos' : 'neg'}">${res.winRate}%</b></span>
-                <span>Avg |move|: <b>${res.avgMove.toFixed(2)}%</b> <small>(next ${8} bars)</small></span>
+                <span>Direction after 8 bars: <b class="${res.winRate >= 50 ? 'pos' : 'neg'}">${res.winRate}%</b></span>
+                <span>Avg |move|: <b>${res.avgMove.toFixed(2)}%</b></span>
+            </div>
+            <div class="backtest-stats">
+                <span title="Each signal walked forward on the real high/low path with YOUR live exit geometry: stop ${res.kSl}xATR, target ${res.kTp}xATR, up to ${res.horizon} bars, stop checked first inside a bar. 1R = the stop distance.">
+                    Expectancy: <b class="${rCls}">${rTxt}</b></span>
+                <span>Stop: <b>${res.stopRate}%</b> · Target: <b>${res.targetRate}%</b> · Ran on: <b>${res.timeoutRate}%</b></span>
+                <span><small>n=${res.rN} · ${res.kSl}x / ${res.kTp}x ATR</small></span>
             </div>`;
     }
 

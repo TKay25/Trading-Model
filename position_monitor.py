@@ -68,10 +68,18 @@ MISS_LIMIT = 8                # consecutive empty polls before we drop a contrac
 POLL_GAP = 0.30               # min seconds between POC calls inside one sweep
 RATE_LIMIT_MIN_BACKOFF = 20.0
 RATE_LIMIT_MAX_BACKOFF = 300.0
+# If no successful read happens for this long while positions are tracked,
+# something is wrong in a way the health FLAGS cannot express. Measured
+# 2026-09-21: `last_ok` sat at 16:29 for 2h40m while `rate_limited=0` and
+# `throttled=False`, i.e. every flag read clean while bot-side stop enforcement
+# was entirely dead. The throttle backoff is SELF-SUSTAINING (it only clears on a
+# success), so this guard keys off the AGE of last_ok, never off the flags.
+STALL_LIMIT_S = 120.0
 
 LIVE = {}                     # cid(int) -> {profit, status, ts, stop, take_profit, symbol}
 _live_lock = threading.Lock()
-_live_health = {"last_ok": 0.0, "rate_limited": 0, "throttled": False, "backoff": 0.0}
+_live_health = {"last_ok": 0.0, "rate_limited": 0, "throttled": False, "backoff": 0.0,
+                "last_kick": 0.0}
 
 
 class RateLimited(Exception):
@@ -615,81 +623,154 @@ class PositionMonitor:
 
     # ---- background loop -------------------------------------------------
     def _run(self):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        """Run the monitor loop, and RESTART it if it ever exits.
+
+        `_loop` used to be able to raise out to here, which logged one line and
+        ended the thread for good: position monitoring (break-even, trailing,
+        stop-loss, take-profit, and the MAE/MFE path data everything else learns
+        from) simply stopped until someone restarted the process. There is no
+        other supervisor, so this loop IS the supervisor.
+        """
+        while self._running:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self._loop())
+            except Exception:
+                logger.exception("Position monitor loop crashed — restarting it in 2s")
+            finally:
+                try:
+                    loop.close()
+                except Exception:
+                    pass
+            if not self._running:
+                break
+            time.sleep(2)      # never hot-spin if _loop keeps failing at once
+        logger.info("Position monitor stopped")
+
+    def _safe_persist(self):
+        """Persist in-flight paths without ever risking the loop.
+
+        This workspace lives on OneDrive, so a file write can fail for reasons
+        that have nothing to do with the monitor (sync locks, a network change
+        mid-write). Losing one snapshot is harmless; losing enforcement is not.
+        """
         try:
-            loop.run_until_complete(self._loop())
-        except Exception:
-            logger.exception("Position monitor loop crashed")
-        finally:
-            loop.close()
-            logger.info("Position monitor stopped")
+            self._persist_open()
+        except Exception as e:
+            logger.warning("Position monitor: could not persist open paths (%r)", e)
 
     async def _loop(self):
         api = None
         cycles = 0
+        started_at = time.time()
         while self._running:
-            with self._lock:
-                tracked = dict(self._limits)
+            # ---- STALL GUARD ---------------------------------------------
+            # See STALL_LIMIT_S. NOTE: this must NOT touch `last_ok`. Re-arming it
+            # here would make the health object report a FRESH read while nothing
+            # worked at all — recreating the exact blindness this guard exists to
+            # remove. The guard keeps its own throttle stamp instead, so `last_ok`
+            # always means "the last time Deriv actually answered".
+            if self._limits:
+                now_t = time.time()
+                # `last_ok` is 0 until the first successful read, so fall back to
+                # when THIS loop started — otherwise every boot looks like an
+                # infinite stall and the guard fires a scary (and false) warning
+                # before the monitor has had a chance to poll even once.
+                age = now_t - (_live_health.get("last_ok") or started_at)
+                if age > STALL_LIMIT_S and (now_t - (_live_health.get("last_kick") or 0.0)) > 30.0:
+                    logger.warning(
+                        "Position monitor: NO successful read for %.0fs with %d "
+                        "position(s) tracked — forcing a fresh session and clearing "
+                        "the throttle backoff", age, len(self._limits))
+                    with _live_lock:
+                        _live_health["last_kick"] = now_t
+                        _live_health["rate_limited"] = 0
+                        _live_health["throttled"] = False
+                        _live_health["backoff"] = 0.0
+                    if api is not None:
+                        await self._close(api)
+                        api = None
 
-            if not tracked:
-                if not self._reconciled:
-                    # Nothing tracked YET — but persisted records may still need
-                    # reconciling, and this branch is where the loop would
-                    # otherwise sleep forever and never restore them.
-                    if api is None:
-                        api = DerivAPI(app_id=Config.DERIV_APP_ID,
-                                       api_token=Config.DERIV_API_TOKEN,
-                                       account_type=Config.DERIV_ACCOUNT_TYPE)
-                        await api.connect(authenticated=True)
-                    self._reconciled = True
-                    await self._restore_live(api)
-                    continue          # re-read _limits (now populated)
-                if api is not None:
+            # NOTHING below may escape this loop. Every await here — including
+            # connect() — can fail on a network change, and an exception used to
+            # end the thread for good with no way back.
+            try:
+                with self._lock:
+                    tracked = dict(self._limits)
+
+                if not tracked:
+                    if not self._reconciled:
+                        # Nothing tracked YET — but persisted records may still need
+                        # reconciling, and this branch is where the loop would
+                        # otherwise sleep forever and never restore them.
+                        if api is None:
+                            api = DerivAPI(app_id=Config.DERIV_APP_ID,
+                                           api_token=Config.DERIV_API_TOKEN,
+                                           account_type=Config.DERIV_ACCOUNT_TYPE)
+                            await api.connect(authenticated=True)
+                        self._reconciled = True
+                        await self._restore_live(api)
+                        continue          # re-read _limits (now populated)
+                    if api is not None:
+                        await self._close(api)
+                        api = None
+                    await asyncio.sleep(1)
+                    continue
+
+                if api is None:
+                    api = DerivAPI(app_id=Config.DERIV_APP_ID,
+                                   api_token=Config.DERIV_API_TOKEN,
+                                   account_type=Config.DERIV_ACCOUNT_TYPE)
+                    await api.connect(authenticated=True)
+                    logger.info("Position monitor connected (authenticated)")
+                    if not self._reconciled:
+                        self._reconciled = True
+                        await self._restore_live(api)
+                        continue          # re-read _limits before polling
+
+                try:
+                    await self._check(api, tracked)
+                except RateLimited as e:
+                    # THROTTLED, not broken. Keep the session: reconnecting would
+                    # leak another session and worsen the account-wide throttling
+                    # (that loop is exactly what disabled SL/TP enforcement once
+                    # every proposal_open_contract call started returning RateLimit).
+                    cycles += 1
+                    if cycles % 15 == 0:
+                        self._safe_persist()
+                    await asyncio.sleep(e.delay)
+                    continue
+                except Exception as e:
+                    logger.warning(f"Position monitor check failed (%r); reconnecting", e)
                     await self._close(api)
                     api = None
-                await asyncio.sleep(1)
-                continue
 
-            if api is None:
-                api = DerivAPI(app_id=Config.DERIV_APP_ID,
-                               api_token=Config.DERIV_API_TOKEN,
-                               account_type=Config.DERIV_ACCOUNT_TYPE)
-                await api.connect(authenticated=True)
-                logger.info("Position monitor connected (authenticated)")
-                if not self._reconciled:
-                    self._reconciled = True
-                    await self._restore_live(api)
-                    continue          # re-read _limits before polling
-
-            try:
-                await self._check(api, tracked)
-            except RateLimited as e:
-                # THROTTLED, not broken. Keep the session: reconnecting would
-                # leak another session and worsen the account-wide throttling
-                # (that loop is exactly what disabled SL/TP enforcement once
-                # every proposal_open_contract call started returning RateLimit).
+                # Snapshot in-flight paths every ~30s so a crash/restart keeps the
+                # partial excursion data of positions that are still open.
                 cycles += 1
                 if cycles % 15 == 0:
-                    self._persist_open()
-                await asyncio.sleep(e.delay)
-                continue
+                    self._safe_persist()
+
+                await asyncio.sleep(2)
             except Exception as e:
-                logger.warning(f"Position monitor check failed (%r); reconnecting", e)
-                await self._close(api)
+                # A failing connect/reconnect must not be terminal. Drop the
+                # half-built session and try again on the next pass.
+                logger.exception("Position monitor pass failed (%r) — continuing", e)
+                try:
+                    if api is not None:
+                        await self._close(api)
+                except Exception:
+                    pass
                 api = None
-
-            # Snapshot in-flight paths every ~30s so a crash/restart keeps the
-            # partial excursion data of positions that are still open.
-            cycles += 1
-            if cycles % 15 == 0:
-                self._persist_open()
-
-            await asyncio.sleep(2)
+                await asyncio.sleep(3)
 
         # Shutdown: keep the excursion data we already gathered.
-        self._persist_open()
-        save_trade_paths(force=True)
+        self._safe_persist()
+        try:
+            save_trade_paths(force=True)
+        except Exception as e:
+            logger.warning("Position monitor: final path save failed (%r)", e)
         if api is not None:
             await self._close(api)
 
@@ -774,7 +855,14 @@ class PositionMonitor:
                 continue
 
             # --- Break-even: once profit reaches a fraction of TP, move SL to 0 ---
-            if lim.get("break_even") and tp and profit >= tp * lim.get("break_even_pct", 0.5) and stop < 0:
+            # `profit > 0` is REQUIRED, not cosmetic. With break_even_pct = 0 the
+            # threshold IS break-even, so `profit >= 0` would arm on a flat
+            # position whose very next poll satisfies `profit <= stop` (0 <= 0) —
+            # closing every new trade at 0 the instant it opened. Strictly
+            # positive also means the arm moment is genuinely in profit, which is
+            # what makes the exit land at zero rather than short of it.
+            if (lim.get("break_even") and tp and profit > 0
+                    and profit >= tp * lim.get("break_even_pct", 0.5) and stop < 0):
                 stop = 0.0
                 lim["stop"] = 0.0
                 logger.info("Break-even reached for %s: profit=%.2f (SL moved to 0)", cid, profit)

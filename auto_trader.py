@@ -384,7 +384,10 @@ class AutoTrader:
             return 0.0, 0.0, multiplier, {"mode": "invalid"}
 
         mode = str(cfg.get("stop_mode") or "atr").lower()
-        if mode != "atr" or not atr_pct:
+        # "lot" also flows through the ATR maths below: the ATR ceiling is what
+        # chooses the multiplier (and therefore how far away the -100% close sits
+        # in PRICE terms), and the ATR target is still the take profit.
+        if mode not in ("atr", "lot") or not atr_pct:
             sl, tp = self._sl_tp(cfg, stake_f)
             return sl, tp, multiplier, {
                 "mode": "stake",
@@ -435,6 +438,35 @@ class AutoTrader:
             mult_f = 0.0
         sl = min(stake_f, round(stake_f * mult_f * stop_move / 100.0, 2))
         tp = round(stake_f * mult_f * tp_move / 100.0, 2)
+        if mode == "lot":
+            # LOT-SIZE STOP (user rule 2026-09-21): the maximum loss is the whole
+            # lot and the ONLY adjustment is at break-even (`break_even_pct: 0`),
+            # so a trade ends at -lot or at ~0 and nothing else.
+            #
+            # The stop is parked AT the stake, which is exactly Deriv's own
+            # `stop_out` (its -100% auto-close), so nothing tighter is enforced
+            # and the position is free to run. The multiplier is STILL chosen by
+            # the ATR ceiling below, and that is what keeps the -100% level out
+            # of the noise: when the ATR stop costs `cap` of the stake, the -100%
+            # close sits 1.5/cap ATR away (2.7 ATR at the 0.55 cap for 15m), so an
+            # ordinary adverse candle cannot end the trade.
+            #
+            # MEASURED TRADE-OFF (exit_study.py, n=183, identical entries):
+            # `SL=lot` has the BEST median (+8.71% vs -11.67% for the 1.5xATR
+            # stop) and the best win rate (55.7% vs 36.6%) — at the cost of a
+            # -100% worst case on every trade break-even does not rescue. Its MEAN
+            # is lower (+5.02% vs +8.66%) because the ATR rule's mean is carried
+            # by fat tails a lot-size stop cannot reach.
+            return stake_f, tp, multiplier, {
+                "mode": "lot",
+                "atr_pct": round(float(atr_pct), 4),
+                "stop_move_pct": round(stop_move, 4),
+                "tp_move_pct": round(tp_move, 4),
+                "risk_pct": 1.0,
+                "risk_usd": stake_f,
+                "multiplier": multiplier,
+                "note": "max loss = the full lot; only break-even moves this stop",
+            }
         return sl, tp, multiplier, {
             "mode": "atr",
             "atr_pct": round(float(atr_pct), 4),
@@ -1084,8 +1116,15 @@ class AutoTrader:
             return False
         limit = {}
         try:
-            if sl:
-                limit["stop_loss"] = round(max(0.10, min(float(sl), float(stake) * 0.98)), 2)
+            # A stop at/above the full stake IS Deriv's own stop_out, so there is
+            # nothing to send — it would only duplicate what the exchange already
+            # does. This is what lets `stop_mode: "lot"` mean "nothing tighter than
+            # the lot" without a special case at every call site. The TAKE PROFIT
+            # is still sent, and that is the half worth having exchange-side: it is
+            # where the fat-tail winners get taken, and it no longer depends on our
+            # polling loop being alive.
+            if sl and float(sl) < float(stake):
+                limit["stop_loss"] = round(max(0.10, float(sl)), 2)
             if tp:
                 limit["take_profit"] = round(max(0.10, float(tp)), 2)
         except (TypeError, ValueError):

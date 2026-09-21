@@ -1,40 +1,50 @@
 {
- "generated_at": 1789994487.801685,
- "records": 106,
+ "generated_at": 1790012802.9737856,
+ "records": 127,
  "groups": {
   "*|15m": {
-   "n": 18,
-   "multiplier": 40,
-   "avg_atr_pct": 0.6162,
+   "n": 32,
+   "multiplier": 50,
+   "avg_atr_pct": 0.535,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
    },
-   "status": "insufficient_data",
-   "needed": 30,
-   "ev_pct": null,
+   "baseline_ev_pct": -0.182,
+   "proposed": {
+    "sl_atr_k": 1.0,
+    "tp_atr_k": 3.0
+   },
+   "fit_ev_pct": -0.122,
+   "fit_n": 22,
+   "fit_win_rate": 0.182,
+   "risk_pct": 0.3051,
+   "oos_ev_pct": -0.1685,
+   "oos_n": 10,
+   "status": "prune",
+   "note": "best fitted rule is not positive \u2014 stop trading this market",
    "pooled": true,
    "key": "*|15m"
   },
   "*|1m": {
-   "n": 60,
+   "n": 62,
    "multiplier": 400,
-   "avg_atr_pct": 0.0763,
+   "avg_atr_pct": 0.0774,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
    },
-   "baseline_ev_pct": -0.0749,
+   "baseline_ev_pct": -0.075,
    "proposed": {
     "sl_atr_k": 1.0,
     "tp_atr_k": 8.0
    },
-   "fit_ev_pct": -0.0509,
-   "fit_n": 42,
-   "fit_win_rate": 0.119,
-   "risk_pct": 0.0752,
-   "oos_ev_pct": -0.0462,
-   "oos_n": 18,
+   "fit_ev_pct": -0.0515,
+   "fit_n": 43,
+   "fit_win_rate": 0.116,
+   "risk_pct": 0.0759,
+   "oos_ev_pct": -0.0489,
+   "oos_n": 19,
    "status": "prune",
    "note": "best fitted rule is not positive \u2014 stop trading this market",
    "pooled": true,
@@ -55,9 +65,9 @@
    "key": "*|30m"
   },
   "*|5m": {
-   "n": 24,
+   "n": 29,
    "multiplier": 160,
-   "avg_atr_pct": 0.2203,
+   "avg_atr_pct": 0.2081,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
@@ -69,24 +79,24 @@
    "key": "*|5m"
   },
   "*|*": {
-   "n": 106,
+   "n": 127,
    "multiplier": 400,
-   "avg_atr_pct": 0.2292,
+   "avg_atr_pct": 0.2463,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
    },
-   "baseline_ev_pct": -0.0262,
+   "baseline_ev_pct": -0.0475,
    "proposed": {
     "sl_atr_k": 1.0,
     "tp_atr_k": 8.0
    },
-   "fit_ev_pct": -0.0043,
-   "fit_n": 74,
-   "fit_win_rate": 0.243,
-   "risk_pct": 0.0889,
-   "oos_ev_pct": -0.1475,
-   "oos_n": 32,
+   "fit_ev_pct": -0.0219,
+   "fit_n": 88,
+   "fit_win_rate": 0.216,
+   "risk_pct": 0.156,
+   "oos_ev_pct": -0.1561,
+   "oos_n": 39,
    "status": "prune",
    "note": "best fitted rule is not positive \u2014 stop trading this market",
    "pooled": true,
@@ -95,6 +105,7 @@
  },
  "params": {},
  "skip": [
+  "*|15m",
   "*|1m"
  ],
  "global_verdict": "prune",

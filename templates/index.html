@@ -267,8 +267,9 @@
                     <input type="range" id="autoTradeStrength" min="0" max="100" value="25" step="5" class="auto-range">
                 </div>
                 <div class="auto-trade-row auto-exits">
-                    <label class="auto-min" title="How the stop/target are defined. ATR = scaled to market volatility (a stop inside normal noise gets hit regardless of whether the signal was right). % stake = the old flat mode.">Exit mode
+                    <label class="auto-min" title="How the stop/target are defined. Lot size = max loss is the whole lot and the stop only moves at break-even. ATR = scaled to market volatility (a stop inside normal noise gets hit regardless of whether the signal was right). % stake = the old flat mode.">Exit mode
                         <select id="autoStopMode" class="auto-num auto-select">
+                            <option value="lot">Lot size</option>
                             <option value="atr">ATR (market)</option>
                             <option value="stake">% of stake</option>
                         </select>
