@@ -169,3 +169,19 @@
 2026-09-21 13:46:42,307 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:46:42] "GET /api/history HTTP/1.1" 200 -
 2026-09-21 13:46:42,651 [WARNING] __main__: Portfolio came back EMPTY while 25 position(s) are tracked - forcing re-authentication and retrying
 2026-09-21 13:46:42,743 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:46:42] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:46:44,351 [INFO] deriv_api: Authenticated via OTP (type=demo)
+2026-09-21 13:46:45,335 [INFO] deriv_api: Connected to Deriv WebSocket API (authenticated)
+2026-09-21 13:46:45,598 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:46:45] "POST /api/scanner HTTP/1.1" 200 -
+2026-09-21 13:46:45,627 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:46:45] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:46:45,638 [INFO] deriv_api: Authenticated connection verified (balance=9763.59)
+2026-09-21 13:46:45,639 [INFO] deriv_api: Shared Deriv connection established (type=demo)
+2026-09-21 13:46:46,146 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:46:46] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:46:46,161 [INFO] __main__: Portfolio retry after re-auth succeeded (25 contract(s))
+2026-09-21 13:46:46,166 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:46:46] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:46:46,180 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:46:46] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:46:46,629 [WARNING] __main__: Portfolio EMPTY with 25 tracked; re-auth SUPPRESSED (4s since last attempt) - serving 25 cached contract(s)
+2026-09-21 13:46:46,640 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:46:46] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:46:46,639 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:46:46] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:46:46,661 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:46:46] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:46:46,970 [WARNING] __main__: Portfolio EMPTY with 25 tracked; re-auth SUPPRESSED (4s since last attempt) - serving 25 cached contract(s)
+2026-09-21 13:46:46,974 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:46:46] "GET /api/positions HTTP/1.1" 200 -
