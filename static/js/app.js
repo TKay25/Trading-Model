@@ -160,6 +160,8 @@ class TradingDashboardApp {
         }
         const closeAllBtn = document.getElementById('closeAllPositions');
         if (closeAllBtn) closeAllBtn.addEventListener('click', () => this._closeAllPositions());
+        const restartBtn = document.getElementById('restartEngine');
+        if (restartBtn) restartBtn.addEventListener('click', () => this._restartEngine());
 
         // $ SL/TP -> market points translation (live while typing)
         const slIn = document.getElementById('stopLoss');
@@ -1165,7 +1167,7 @@ class TradingDashboardApp {
                 this._scannerSignals = [];
                 this._autoTradeNotified = {};
                 if (this.historyBody) {
-                    this.historyBody.innerHTML = '<tr class="history-empty"><td colspan="11"><i class="bi bi-journal-x"></i>Fresh start — no trades yet.</td></tr>';
+                    this.historyBody.innerHTML = '<tr class="history-empty"><td colspan="12"><i class="bi bi-journal-x"></i>Fresh start — no trades yet.</td></tr>';
                 }
                 if (this.positionsBody) {
                     this.positionsBody.innerHTML = '<div class="positions-empty"><i class="bi bi-briefcase"></i>No open positions.</div>';
@@ -1402,7 +1404,7 @@ class TradingDashboardApp {
         this._updatePerformance(fullRows);
         if (!rows || !rows.length) {
             this.historyBody.innerHTML =
-                '<tr class="history-empty"><td colspan="11"><i class="bi bi-journal-x"></i>No trades yet.</td></tr>';
+                '<tr class="history-empty"><td colspan="12"><i class="bi bi-journal-x"></i>No trades yet.</td></tr>';
             return;
         }
         this.historyBody.innerHTML = rows.map(r => {
@@ -1438,6 +1440,7 @@ class TradingDashboardApp {
                 <td>${tp}</td>
                 <td>${profitCell}</td>
                 <td><span class="history-status ${status}">${label}</span></td>
+                <td><span class="history-exit">${r.exit_reason || '—'}</span></td>
             </tr>`;
         }).join('');
         this._updateStatsFromHistory(rows, fullRows);
@@ -1451,27 +1454,88 @@ class TradingDashboardApp {
     _clearHistory() {
         if (this.historyBody) {
             this.historyBody.innerHTML =
-                '<tr class="history-empty"><td colspan="11"><i class="bi bi-plug"></i>Connect to your account to view trading history.</td></tr>';
+                '<tr class="history-empty"><td colspan="12"><i class="bi bi-plug"></i>Connect to your account to view trading history.</td></tr>';
         }
     }
 
     /**
      * Load and render open positions (portfolio).
      */
+    /** Server-side count of positions the monitor is actually tracking.
+     *  Independent evidence, used to sanity-check an EMPTY portfolio response. */
+    async _trackedOpenCount() {
+        try {
+            const d = await (await fetch('/api/paths')).json();
+            const n = Number(d.open);
+            return Number.isFinite(n) ? n : 0;
+        } catch (err) {
+            return 0;
+        }
+    }
+
     async _loadPositions() {
         if (!this.positionsBody) return;
         try {
-            const resp = await fetch('/api/positions');
-            const data = await resp.json();
-            if (data.success && Array.isArray(data.positions)) {
-                this._renderPositions(data.positions);
+            const data = await (await fetch('/api/positions')).json();
+            let rows = (data.success && Array.isArray(data.positions)) ? data.positions : null;
+
+            // A transient EMPTY portfolio (Deriv's connection re-authing, or the
+            // server still booting) is indistinguishable from "genuinely flat", and
+            // it used to zero BOTH this card and the Open Positions tile — which is
+            // the "Open Positions 0" the user kept seeing while trades were open.
+            // The monitor's tracked count is independent server-side evidence, so
+            // use it to decide whether an empty portfolio is believable.
+            if (rows && rows.length === 0) {
+                const tracked = await this._trackedOpenCount();
+                if (tracked > 0 || (this._openPositions || []).length) {
+                    await new Promise(r => setTimeout(r, 1200));
+                    const retry = await (await fetch('/api/positions')).json();
+                    if (retry.success && Array.isArray(retry.positions) && retry.positions.length) {
+                        rows = retry.positions;
+                    } else if (tracked > 0) {
+                        // Still empty but positions ARE tracked: report the real
+                        // count and mark the net as unknown instead of lying "0".
+                        this._renderPositionsUnavailable(tracked);
+                        return;
+                    }
+                }
+            }
+
+            if (rows) {
+                this._renderPositions(rows);
             } else {
                 this.positionsBody.innerHTML =
                     `<div class="positions-empty">${data.error || 'No positions available'}</div>`;
+                // Keep the previous count/net rather than showing a false zero.
             }
         } catch (err) {
             this.positionsBody.innerHTML = '<div class="positions-empty">Failed to load positions</div>';
-            this._openPositions = [];
+            // Deliberately do NOT clear this._openPositions: an empty list here
+            // would let the client-side no-hedge guard open an opposite position.
+        }
+    }
+
+    /** Portfolio could not be read, but positions exist. Never show a false zero. */
+    _renderPositionsUnavailable(tracked) {
+        this.positionsBody.innerHTML =
+            `<div class="positions-empty"><i class="bi bi-briefcase"></i>${tracked} position(s) ` +
+            `tracked, but the account portfolio could not be read. Retrying…</div>`;
+        const countEl = document.getElementById('positionsCount');
+        const openEl = document.getElementById('statOpen');
+        if (countEl) countEl.textContent = tracked;
+        if (openEl) openEl.textContent = tracked;
+        const netEl = document.getElementById('positionsNet');
+        const openNetEl = document.getElementById('statOpenNet');
+        const title = 'Portfolio read failed — P/L unavailable';
+        if (netEl) {
+            netEl.className = 'positions-net';
+            netEl.textContent = 'Net P/L: —';
+            netEl.title = title;
+        }
+        if (openNetEl) {
+            openNetEl.className = 'stat-sub';
+            openNetEl.textContent = '—';
+            openNetEl.title = title;
         }
     }
 
@@ -1481,17 +1545,29 @@ class TradingDashboardApp {
         const countEl = document.getElementById('positionsCount');
         const netEl = document.getElementById('positionsNet');
         const openEl = document.getElementById('statOpen');
+        const openNetEl = document.getElementById('statOpenNet');
         const count = (positions && positions.length) || 0;
         if (countEl) countEl.textContent = count;
         if (openEl) openEl.textContent = count;
+        // Both the card header AND the stats tile carry the net P/L of the open
+        // trades, so the strip answers "how many, and are they up or down?"
+        // without scrolling. `tileText` is the same number without the label.
+        const setNet = (cardText, cls, title, tileText) => {
+            if (netEl) {
+                netEl.className = ('positions-net ' + (cls || '')).trim();
+                netEl.textContent = cardText;
+                netEl.title = title;
+            }
+            if (openNetEl) {
+                openNetEl.className = ('stat-sub ' + (cls || '')).trim();
+                openNetEl.textContent = tileText;
+                openNetEl.title = title;
+            }
+        };
 
         if (!positions || !positions.length) {
             this.positionsBody.innerHTML = '<div class="positions-empty"><i class="bi bi-briefcase"></i>No open positions.</div>';
-            if (netEl) {
-                netEl.className = 'positions-net';
-                netEl.textContent = 'Net: $0.00';
-                netEl.title = 'No open positions';
-            }
+            setNet('Net P/L: $0.00', '', 'No open positions', '$0.00');
             return;
         }
         let netPl = 0, exposure = 0, hasPl = false;
@@ -1529,18 +1605,15 @@ class TradingDashboardApp {
             </div>`;
         }).join('');
 
-        // Net open position (unrealized P/L) + exposure in the header.
-        if (netEl) {
-            if (hasPl) {
-                const netCls = netPl >= 0 ? 'pos' : 'neg';
-                netEl.className = `positions-net ${netCls}`;
-                netEl.textContent = `Net P/L: ${netPl >= 0 ? '+' : ''}$${netPl.toFixed(2)}`;
-                netEl.title = `Net unrealized P/L · Exposure: $${exposure.toFixed(2)}`;
-            } else {
-                netEl.className = 'positions-net';
-                netEl.textContent = 'Net: $0.00';
-                netEl.title = 'No profit data for open positions';
-            }
+        // Net open position (unrealized P/L) + exposure in the header AND the tile.
+        if (hasPl) {
+            const netCls = netPl >= 0 ? 'pos' : 'neg';
+            const netTxt = `${netPl >= 0 ? '+' : ''}$${netPl.toFixed(2)}`;
+            setNet(`Net P/L: ${netTxt}`, netCls,
+                   `Net unrealized P/L · Exposure: $${exposure.toFixed(2)}`, netTxt);
+        } else {
+            // Do not claim $0.00 when the API simply had no profit data.
+            setNet('Net P/L: —', '', 'No profit data for open positions', '—');
         }
 
         this.positionsBody.querySelectorAll('.position-item').forEach(item => {
@@ -1609,6 +1682,43 @@ class TradingDashboardApp {
         }
         const openEl = document.getElementById('statOpen');
         if (openEl) openEl.textContent = '0';
+    }
+
+    /**
+     * Restart the server-side trading engine (scan loop) and re-protect positions.
+     * The page cannot re-boot the server that serves it — use the desktop shortcut
+     * for that — but it CAN re-initialise the engine in-process.
+     */
+    async _restartEngine() {
+        const btn = document.getElementById('restartEngine');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Restarting…';
+        }
+        try {
+            // The restart joins the scan thread plus an adoption sweep, so allow
+            // a generous window without hanging the button forever.
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 60000);
+            const resp = await fetch('/api/auto/restart', { method: 'POST', signal: ctrl.signal });
+            clearTimeout(timer);
+            const data = await resp.json();
+            if (data.success) {
+                this._notify('Engine Restarted', data.message || 'Trading engine restarted');
+                this._loadPositions();
+                this._loadHistory();
+            } else {
+                this._notify('Restart Failed', data.error || 'Could not restart the engine');
+            }
+        } catch (err) {
+            this._notify('Restart Error', err && err.name === 'AbortError'
+                ? 'Engine restart timed out' : String(err));
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Restart Engine';
+            }
+        }
     }
 
     _notify(title, message) {

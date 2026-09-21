@@ -11,7 +11,7 @@ from config import Config
 from deriv_api import DerivAPI, SharedDerivConnection
 from live_balance_stream import LiveBalanceStream
 from live_stream import LiveDerivStream
-from position_monitor import PositionMonitor
+from position_monitor import PositionMonitor, exit_reason_map
 from trading_service import (
     TradingService, Candle, PatternRecognizer, TDICalculator
 )
@@ -398,6 +398,30 @@ def _start_results_threads():
                          name="results-reconciler").start()
 
 
+def _attach_exit_reasons(rows):
+    """Add `exit_reason` (how each position actually ENDED) to history rows.
+
+    Single choke point for the history table, the CSV export and the analysis
+    views. The reason lives in the position monitor's path records, keyed by
+    contract id, so a row gets a human label — "Stop-loss", "Reversal",
+    "-100% auto-close", "Closed while down", "Tracking", ... A row with no path
+    record (most of pre-2026-09-21 history) stays None and the column shows a dash,
+    which is honest: we genuinely do not know. Never raises — attribution is
+    decoration and must not be able to break the history endpoint.
+    """
+    try:
+        labels = exit_reason_map()
+    except Exception:
+        return rows
+    for r in rows:
+        try:
+            cid = r.get("contract_id")
+            r["exit_reason"] = labels.get(int(cid)) if cid is not None else None
+        except (TypeError, ValueError):
+            r["exit_reason"] = None
+    return rows
+
+
 def _results_rows():
     """Build normalized history rows (open + settled) from the app's own
     outcome ledger — i.e. EVERY trade opened so far (same schema as history
@@ -421,6 +445,7 @@ def _results_rows():
             "profit": r.get("profit"),
             "status": r.get("status"),
         })
+    _attach_exit_reasons(rows)
     rows.sort(key=lambda h: h["time"] or 0, reverse=True)
     return rows
 
@@ -1198,6 +1223,31 @@ def auto_config():
     return jsonify({"success": True, "config": cfg})
 
 
+@app.route("/api/auto/restart", methods=["POST"])
+def auto_restart():
+    """Restart the trading engine in-process (dashboard "Restart Engine").
+
+    WHY THIS EXISTS: a button on this page can never re-boot the bot, because the
+    page is served BY the bot's process — if it is stopped there is no page to
+    click. This restarts the ENGINE (scan loop) plus the position-adoption sweep,
+    and reports how many positions are tracked/protected. Use the desktop shortcut
+    when the server itself needs booting.
+    """
+    if auto_trader is None:
+        return jsonify({"success": False, "error": "auto-trader not initialized"}), 503
+    try:
+        info = auto_trader.resync()
+    except Exception as e:
+        logger.error(f"Engine restart failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+    return jsonify({
+        "success": True,
+        **info,
+        "message": (f"Engine restarted · {info.get('tracked', 0)} position(s) tracked, "
+                    f"{info.get('protected', 0)} newly protected"),
+    })
+
+
 @app.route("/api/auto/status")
 def auto_status():
     """Server-side auto-trader status (config + last cycle activity)."""
@@ -1453,6 +1503,7 @@ def _build_history(pt_payload, port_payload, cutoff=0):
             continue
 
     history.sort(key=lambda h: h["time"] or 0, reverse=True)
+    _attach_exit_reasons(history)
     return history
 
 

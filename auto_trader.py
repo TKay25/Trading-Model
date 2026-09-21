@@ -477,6 +477,42 @@ class AutoTrader:
         if self._thread:
             self._thread.join(timeout=3)
 
+    def resync(self):
+        """Restart the scan loop and re-protect every open position.
+
+        Exposed to the dashboard as "Restart Engine". The page cannot re-boot the
+        server that serves it, so this is the in-page equivalent: it restarts the
+        trading engine and immediately re-runs the adoption sweep, which is the
+        step that guarantees no open position is left without a stop.
+
+        Cooldowns are PRESERVED across the restart on purpose — clearing them
+        would let the bot immediately re-open positions it had just opened.
+        """
+        with self._lock:
+            cfg = dict(self._cfg)
+            cooldowns = dict(self._cooldown)
+            exit_cooldowns = dict(self._exit_cooldown)
+        self.stop()
+        self._cooldown = cooldowns
+        self._exit_cooldown = exit_cooldowns
+        self._last_adopt = None
+        self.start()
+        protected = 0
+        try:
+            protected = self._adopt_untracked(cfg)
+        except Exception as e:
+            logger.warning("resync: adoption sweep failed: %r", e)
+        # We just ran it ourselves, so don't let the next cycle repeat it at once.
+        self._last_adopt = time.time()
+        tracked = 0
+        try:
+            tracked = self._pm.tracked_count()
+        except Exception:
+            pass
+        logger.info("Auto-trader engine RESTARTED via dashboard (tracked=%d, "
+                    "newly protected=%d)", tracked, protected)
+        return {"tracked": tracked, "protected": protected}
+
     def _run(self):
         while self._running:
             try:

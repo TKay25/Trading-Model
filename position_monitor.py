@@ -107,6 +107,52 @@ def path_summary():
     return out
 
 
+# Human-readable exit attribution for the history / analysis tables. The raw
+# `exit_reason` answers "what ended this position?", which is exactly what you
+# want next to a loss: was it a stop-loss, a reversal exit, Deriv's own -100%
+# close, or an artefact of the bot restarting?
+_EXIT_LABELS = {
+    "stop_loss": "Stop-loss",
+    "take_profit": "Take-profit",
+    "reversal_exit": "Reversal",
+    "profit_target": "Profit target",
+    "close_all": "Close all",
+    "manual": "Manual",
+    "settled": "Settled",
+    "deriv_auto_close": "-100% auto-close",
+    "closed_while_down": "Closed while down",
+    "vanished": "Dropped (no data)",
+}
+
+# A stop that fired within this many seconds of ADOPTION was almost certainly
+# installed already-breached by the adoption sweep rather than triggered by the
+# market: an adopted record's t_open is the ADOPTION moment, so hold_s ~ 0 means
+# "sold seconds after we started watching it". Measured 2026-09-21: 19 of 53
+# recorded stop-outs were this (median hold 14s vs 202s for real stops). They are
+# policy artefacts, NOT strategy outcomes, so they are flagged here explicitly.
+ADOPT_ARTIFACT_S = 120
+
+
+def exit_reason_map():
+    """contract_id -> human label, for the trade history and analysis tables."""
+    out = {}
+    with _paths_lock:
+        recs = list(trade_paths.items())
+    for cid, r in recs:
+        if not isinstance(r, dict):
+            continue
+        reason = r.get("exit_reason")
+        if not reason:
+            out[cid] = "Tracking" if not r.get("t_close") else "Closed"
+            continue
+        label = _EXIT_LABELS.get(reason, reason)
+        if (reason == "stop_loss" and r.get("adopted")
+                and (r.get("hold_s") or 0) < ADOPT_ARTIFACT_S):
+            label += " (adopted at boot)"
+        out[cid] = label
+    return out
+
+
 load_trade_paths()
 
 
@@ -515,6 +561,8 @@ class PositionMonitor:
             await self._close(api)
 
     async def _check(self, api, tracked):
+        answered = 0        # contracts that returned usable data this pass
+        pending_miss = []   # contracts with no data, judged once we know the link is alive
         for cid, lim in tracked.items():
             if not self._running:
                 return
@@ -543,18 +591,12 @@ class PositionMonitor:
                 self.untrack(cid, reason="settled")
                 continue
             if profit is None:
-                # No data. A healthy contract answers on the next poll, but one
-                # that closed while the bot was DOWN can stay unknown to this API
-                # forever — it must not sit in the tracked set pretending to be
-                # protected. Count consecutive empties and drop it after a few.
-                miss = int(lim.get("_misses") or 0) + 1
-                lim["_misses"] = miss
-                if miss >= MISS_LIMIT:
-                    self.untrack(cid, reason="vanished")
-                    logger.warning("Position monitor dropped %s after %d empty "
-                                   "response(s) — closed while the bot was down?",
-                                   cid, miss)
+                # No data for this contract. Defer the decision: a broken LINK
+                # also produces empty responses for EVERY contract, and we must
+                # not mistake that for 30 dead contracts.
+                pending_miss.append(cid)
                 continue
+            answered += 1
             lim["_misses"] = 0
 
             profit = float(profit)
@@ -607,6 +649,33 @@ class PositionMonitor:
                 self.untrack(cid, reason="stop_loss")
                 logger.info("Stop-loss hit for %s: profit=%.2f (stop %.2f)",
                             cid, profit, stop)
+
+        # ---- link-vs-contract disambiguation (2026-09-21) -------------------
+        # If NOTHING answered this pass, the LINK is broken, not the contracts.
+        # Counting misses here would drop every tracked position at once and leave
+        # the account unprotected — observed: 16 positions dropped inside 5
+        # seconds right after a restart, while every Deriv call returned empty
+        # (a broken connection is indistinguishable from "all contracts gone"
+        # unless you look at the pass as a whole). Raising forces _loop to close
+        # and re-establish the connection instead of discarding our protection.
+        if pending_miss and answered == 0 and len(tracked) > 1:
+            logger.warning("Position monitor: no contract answered this pass "
+                           "(%d tracked) — treating as a CONNECTION problem, not as "
+                           "vanished contracts; reconnecting", len(tracked))
+            raise ConnectionError("no contract answered")
+        # At least one contract answered, so the link IS alive; only now is it
+        # safe to believe that these specific contracts no longer exist.
+        for cid in pending_miss:
+            lim = tracked.get(cid)
+            if lim is None:
+                continue
+            miss = int(lim.get("_misses") or 0) + 1
+            lim["_misses"] = miss
+            if miss >= MISS_LIMIT:
+                self.untrack(cid, reason="vanished")
+                logger.warning("Position monitor dropped %s after %d empty "
+                               "response(s) — contract gone while the bot was down?",
+                               cid, miss)
 
     async def _close(self, api):
         try:

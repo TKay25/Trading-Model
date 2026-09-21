@@ -32,6 +32,7 @@
             <div class="stat-info">
                 <span class="stat-label">Open Positions</span>
                 <span class="stat-value" id="statOpen">0</span>
+                <span class="stat-sub" id="statOpenNet">—</span>
             </div>
         </div>
         <div class="stat-card" title="Per-trade risk from your ACTUAL trading results — 95% VaR of your profit/loss (needs ≥5 settled trades)">
@@ -226,6 +227,9 @@
                         <label class="switch-label auto-paper"><input type="checkbox" id="autoTradePaper"> <span>Paper</span></label>
                         <label class="switch-label auto-paper" title="Close a position when TDI + M/W + candlestick signals flip against it"><input type="checkbox" id="autoExitReversal" checked> <span>Exit on rev.</span></label>
                         <span id="autoModeBadge" class="auto-mode-badge live">LIVE</span>
+                        <button id="restartEngine" class="toolbar-btn" title="Restart the trading engine and re-protect open positions. Use the desktop shortcut to boot the server itself.">
+                            <i class="bi bi-arrow-repeat"></i> Restart Engine
+                        </button>
                         <input type="range" id="autoTradeStrength" min="0" max="100" value="25" step="5" class="auto-range">
                     </div>
                     <div class="auto-trade-row auto-exits">
@@ -299,10 +303,11 @@
                     <th>TP ($)</th>
                     <th>Profit / Loss</th>
                     <th>Result</th>
+                    <th>Closed By</th>
                 </tr>
             </thead>
             <tbody id="historyBody">
-                <tr class="history-empty"><td colspan="11">Connect to your account to view trading history.</td></tr>
+                <tr class="history-empty"><td colspan="12">Connect to your account to view trading history.</td></tr>
             </tbody>
         </table>
     </div>
