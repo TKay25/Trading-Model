@@ -119,18 +119,24 @@ class AutoTrader:
             "exit_on_reversal": True,
             "stake": 1.0,
             "multiplier": 400,
-            # USER RULE (2026-09-02): when NET profit — realised PLUS the
-            # unrealised P/L of open positions — reaches this many $, close
-            # EVERY open position to bank it, then KEEP auto-trading (never
-            # pauses). 0 = feature off.
-            # REMOVED 2026-09-20 (user decision): the +$15 equity profit-target
-            # close-all is OFF. It closed EVERY open position (incl. winners) as
-            # soon as net equity — realised + unrealised — reached +$15, which
-            # directly contradicts the new "let winners run" exit design
-            # (TP +500% of stake): it closed 17 positions 6s after the first boot
-            # of the hard-exit build. 0 = feature off. The code path below is
-            # intact, so setting this back to a positive $ re-enables it.
-            "profit_target": 0.0,
+            # USER RULE (2026-09-20): as soon as the NET P/L OF THE OPEN TRADES
+            # reaches this many $, close EVERY open position to bank it, then
+            # CARRY ON OPENING new trades (the bot is never paused).
+            # This is the floating P/L the dashboard shows as "Net P/L" on the
+            # Open Positions panel — it does NOT include already-realised losses.
+            # See `profit_target_mode` to include realised P/L instead.
+            # 0 = feature off.
+            # HISTORY: an earlier $15 target used realised+floating equity and was
+            # removed because it cut winners short (closed 17 positions 6s after
+            # boot); this rebuild is the user's explicit re-introduction at $8 on
+            # the narrower OPEN-P/L basis, and it no longer blocks the rest of
+            # the cycle, so new trades open immediately after the close-all.
+            "profit_target": 8.0,
+            # Basis for the rule above:
+            #   "open"   (default): live/floating P/L of OPEN positions only.
+            #   "equity" (legacy):  finished P/L since the last flat point PLUS
+            #                       floating, i.e. (cash - baseline) + proceeds.
+            "profit_target_mode": "open",
             # HARD EXITS (USER RULE 2026-09-20). Two modes, see `_exits`:
             #   "atr"   (DEFAULT, 2026-09-20): stop/target are k x ATR% of PRICE,
             #           then converted to $ via the position's exposure.
@@ -210,6 +216,21 @@ class AutoTrader:
             # literally "re-enter on the timeframe whose reversal closed it".
             # false = allow the cross-timeframe replacement again.
             "strict_flip": True,
+            # ADOPTION MODE (user rule 2026-09-21). A position open before a restart
+            # is UNTRACKED, so adoption must invent a stop for it from a fresh ATR.
+            # If that stop is already breached by the position's CURRENT P/L,
+            # enforcing it sells the position the moment it is adopted — a restart
+            # then realises losses nothing else would have (measured 2026-09-21:
+            # ~11 positions sold at -0.11..-0.92 within seconds of a restart, at
+            # stops of -0.12).
+            #   "forward" (DEFAULT): keep protecting it, but anchor the stop one
+            #            full ATR of risk FROM NOW (stop = current P/L - risk), so
+            #            it cannot fire immediately. The past loss is sunk; it is
+            #            not a reason to sell at an arbitrary moment.
+            #   "skip":  do not adopt a breached position at all — report it.
+            #   "strict": old behaviour — install the entry-anchored stop and let
+            #            it fire immediately.
+            "adopt_mode": "forward",
         }
         self._cooldown = {}        # (symbol, tf) -> last OPEN ts
         self._exit_cooldown = {}   # (symbol, direction, tf) -> last close ts
@@ -228,10 +249,12 @@ class AutoTrader:
         with self._lock:
             for k in ("enabled", "min_strength", "paper", "exit_on_reversal",
                       "stake", "multiplier", "profit_target", "learning",
+                      "profit_target_mode",
                       "blocked_symbols", "blocked_timeframes", "blocked_strength",
                       "strict_flip",
                       "stop_mode", "sl_atr_k", "tp_atr_k", "min_stop_move_pct",
-                      "max_risk_pct", "risk_by_tf", "stop_loss_pct", "take_profit_pct"):
+                      "max_risk_pct", "risk_by_tf", "stop_loss_pct", "take_profit_pct",
+                      "adopt_mode"):
                 if k in kw:
                     self._cfg[k] = kw[k]
             cfg = dict(self._cfg)
@@ -482,47 +505,54 @@ class AutoTrader:
         # below min_strength" and "every signal unaffordable geometrically".
         self._skip_reasons = collections.Counter()
 
-        # ---- PROFIT TARGET (added 2026-09-02, DISABLED 2026-09-20 by user):
-        # when NET profit — REALISED profit since the last baseline PLUS the
-        # current UNREALISED P/L of open positions — reaches `profit_target` $,
-        # close EVERY open position to bank it, then KEEP auto-trading (never
-        # pauses). Baseline = cash at the last flat point (server start / after
-        # a profit-target close-all). Net = (cash_now - baseline) +
-        # sum(stake_i + profit_i) over open: opening a trade subtracts its stake
-        # from cash but adds it back to the open proceeds, so only live P/L
-        # moves the number.
-        # profit_target 0 = OFF — which is the current default: the rule cut
-        # winners short (it closed 17 positions 6s after boot) and contradicts
-        # the hard-exit design (TP +500% of stake). Set a positive $ to restore.
-        # Runs BEFORE the candle scan so a scan failure never skips the lock-in.
+        # ---- PROFIT TARGET (USER RULE 2026-09-20): as soon as the NET P/L of
+        # the OPEN trades reaches `profit_target` $, close EVERY open position to
+        # bank it, then CARRY ON OPENING new trades. The bot is never paused.
+        # This is the floating P/L the dashboard shows as "Net P/L" on the Open
+        # Positions panel; it does NOT include already-realised losses.
+        # `profit_target_mode`: "open" (default) = floating P/L only;
+        # "equity" (legacy) = (cash - baseline) + open proceeds.
+        # profit_target 0 = OFF.
+        # Runs BEFORE the candle scan so a scan failure never skips the lock-in,
+        # and deliberately does NOT return: the user asked for new trades to be
+        # opened straight after the close-all, so the cycle continues normally.
         profit_target = float(cfg.get("profit_target") or 0)
         if profit_target > 0:
             eq = self._open_equity()
             if eq is not None:
-                cash, proceeds, _n, open_cids = eq
-                if self._baseline is None:
-                    self._baseline = cash
-                net = (cash - self._baseline) + proceeds
-                logger.info("AutoTrader equity check: cash=%.2f baseline=%.2f "
-                            "open_proceeds=%.2f net=%.2f (target %.2f)",
-                            cash, self._baseline, proceeds, net, profit_target)
+                cash = eq["cash"]
+                if str(cfg.get("profit_target_mode") or "open").lower() == "equity":
+                    if self._baseline is None:
+                        self._baseline = cash
+                    net = (cash - self._baseline) + eq["proceeds"]
+                    basis = "equity"
+                else:
+                    net = eq["open_pnl"]
+                    basis = "open-pnl"
+                logger.info("AutoTrader profit-target check (%s): open_pnl=%.2f "
+                            "cash=%.2f n_open=%d net=%.2f (target %.2f)",
+                            basis, eq["open_pnl"], cash, eq["n_open"], net,
+                            profit_target)
                 if net >= profit_target:
-                    closed_n = self._close_contracts(
-                        open_cids, reason=f"profit target +${net:.2f}") if open_cids else 0
+                    had = bool(eq["cids"])
+                    closed_n = (self._close_contracts(
+                        eq["cids"], reason=f"profit target +${net:.2f}")
+                        if had else 0)
                     # Bank it: restart the cash baseline from the post-close
-                    # balance (all positions closed => flat) and keep trading.
-                    eq2 = self._open_equity()
-                    self._baseline = (eq2[0] if eq2 is not None else cash)
+                    # balance (all positions closed => flat).
+                    e2 = self._open_equity()
+                    if e2 is not None:
+                        self._baseline = e2["cash"]
+                    if had:
+                        closed.append(f"profit+${net:.2f} x{closed_n}")
                     self._set_last(
-                        at=now, opened=[],
-                        closed=[f"profit+${net:.2f} x{closed_n}"],
-                        scan=0,
-                        message=(f"profit target +${net:.2f} hit -> closed "
-                                 f"{closed_n} open position(s); auto-trade continues"))
-                    logger.info("AutoTrader PROFIT TARGET +$%.2f reached -> closed "
-                                "%d position(s); baseline reset to $%.2f",
-                                net, closed_n, self._baseline)
-                    return  # bank first; resume opening on the next cycle
+                        at=now, opened=[], closed=list(closed), scan=0,
+                        message=(f"profit target +${net:.2f} reached -> closed "
+                                 f"{closed_n} open position(s); trading continues"))
+                    logger.info("AutoTrader PROFIT TARGET +$%.2f reached (%s) -> "
+                                "closed %d position(s); baseline reset to $%.2f; "
+                                "trading continues", net, basis, closed_n,
+                                self._baseline or 0.0)
 
         # 0) ADOPT unprotected positions: anything open that the monitor isn't
         # tracking (opened before a restart, or placed outside the bot) gets the
@@ -696,12 +726,13 @@ class AutoTrader:
             raise TimeoutError(f"Deriv request timed out after {timeout}s") from None
 
     def _open_equity(self):
-        """Snapshot for the profit-target rule: (cash_balance, open_proceeds,
-        n_open, open_contract_ids) or None if the fetch fails.
+        """Snapshot for the profit-target rule; returns a dict, or None on failure.
 
-        open_proceeds = sum(stake_i + live_profit_i) over open contracts — i.e.
-        what the open positions are currently worth on top of the cash balance
-        (this is the "current profit on running trades" the user watches).
+        Keys: cash (account balance), proceeds (sum of stake_i + live_profit_i
+        over open contracts), stake (sum of stake_i), open_pnl (proceeds - stake
+        == the live P/L of the open trades, i.e. the dashboard's "Net P/L"),
+        n_open, cids.
+
         Fetched over the AutoTrader's dedicated auth connection with bounded
         concurrency; a contract whose live-P/L probe fails counts only its stake
         (neutral) so a slow probe never blocks the whole check.
@@ -735,16 +766,21 @@ class AutoTrader:
                 outs = await asyncio.gather(
                     *(_probe(c) for c in contracts), return_exceptions=True)
                 proceeds = 0.0
+                stakes = 0.0
                 cids = []
                 for c, o in zip(contracts, outs):
                     cid = c.get("contract_id")
                     if cid is not None:
                         cids.append(cid)
+                    stake_i = float(c.get("buy_price") or 0)
+                    stakes += stake_i
                     if isinstance(o, Exception):
-                        proceeds += float(c.get("buy_price") or 0)
+                        proceeds += stake_i
                     else:
                         proceeds += o
-                return cash, proceeds, len(contracts), cids
+                return {"cash": cash, "proceeds": proceeds, "stake": stakes,
+                        "open_pnl": proceeds - stakes, "n_open": len(contracts),
+                        "cids": cids}
 
             return self._call(_snap, authenticated=True, timeout=45)
         except Exception as e:
@@ -1029,6 +1065,11 @@ class AutoTrader:
         installing a stake-relative stop on it just guarantees a stop-out (17/17
         closed positions did exactly that in the stake-relative build).
         Idempotent: ids already tracked are skipped, so it never double-tracks.
+
+        Also refuses to LIQUIDATE on adoption: see `adopt_mode`. A stop computed
+        from ENTRY is frequently already breached by a long-running position's
+        current P/L, so installing it would sell the position the instant it is
+        adopted — converting a restart into realised losses.
         """
         try:
             async def _port(api):
@@ -1063,6 +1104,34 @@ class AutoTrader:
             if sl is None:
                 unprotected.append(f"{sym}({self._ledger_multiplier(cid)}x)")
                 continue
+            # ALREADY-BREACHED GUARD (user rule 2026-09-21, see `adopt_mode`).
+            # `sl` is a stop distance from ENTRY; this position has been running a
+            # while, so its current P/L may already be past it and installing that
+            # stop would liquidate it instantly. A restart must never be the thing
+            # that decides to realise a loss.
+            cur = None
+            try:
+                if c.get("profit") is not None:
+                    cur = float(c.get("profit"))
+            except (TypeError, ValueError):
+                cur = None
+            mode = str(cfg.get("adopt_mode") or "forward").lower()
+            if cur is not None and cur <= -sl + 1e-9 and mode != "strict":
+                # Forward anchor: one full risk budget of headroom from HERE, so it
+                # cannot fire on the next poll. If that would sit beyond Deriv's own
+                # -100% close there is no usable stop left, so report instead of
+                # pretending to protect it.
+                if mode == "skip" or (cur - sl) <= -stake:
+                    unprotected.append(
+                        f"{sym}({self._ledger_multiplier(cid)}x)@{-cur:+.2f}"
+                        + ("" if mode == "skip" else " no-stop-room"))
+                    continue
+                logger.info("Auto-trader adopting %s (%sx, %s) with a FORWARD stop: "
+                            "already at %+.2f, so instead of selling instantly at the "
+                            "entry-anchored -%.2f the stop is anchored one ATR of risk "
+                            "from here (%.2f)", sym, self._ledger_multiplier(cid), tf,
+                            cur, sl, cur - sl)
+                sl = round(abs(cur - sl), 2)
             ct = str(c.get("contract_type") or "").upper()
             direction = "SELL" if any(x in ct for x in ("DOWN", "PUT")) else "BUY"
             self._pm.track(cid, sym, sl, tp, meta={

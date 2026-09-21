@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 PATHS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_paths.json")
 MAX_PATHS = 20000
 _SAVE_EVERY = 30.0            # seconds between throttled disk writes
+MISS_LIMIT = 8                # consecutive empty polls before we drop a contract
 
 _paths_lock = threading.Lock()
 trade_paths = {}              # contract_id (int) -> record
@@ -90,6 +91,10 @@ def path_summary():
             "stop_loss_exits": sum(1 for r in closed if r.get("exit_reason") == "stop_loss"),
             "take_profit_exits": sum(1 for r in closed if r.get("exit_reason") == "take_profit"),
             "settled_exits": sum(1 for r in closed if r.get("exit_reason") in ("settled", "deriv_auto_close")),
+            # Contracts that stopped answering and were dropped: normally ones
+            # that closed while the process was down. Non-zero here means we
+            # restored a stale record — worth investigating, not a normal exit.
+            "vanished_exits": sum(1 for r in closed if r.get("exit_reason") == "vanished"),
             # THE key number: trades that went deep red and still ended green —
             # i.e. winners a tighter stop would have destroyed.
             "dipped_then_recovered": sum(
@@ -113,12 +118,17 @@ class PositionMonitor:
         self._lock = threading.Lock()
         self._thread = None
         self._running = False
+        self._reconciled = False   # startup restore/reconcile done exactly once
 
     # ---- lifecycle ----------------------------------------------------
     def start(self):
         if self._thread and self._thread.is_alive():
             return
         self._running = True
+        # BEFORE the loop starts: re-register every position that was open when
+        # the process stopped. Tracking lives only in memory, so without this a
+        # restart leaves positions with no stop until the adoption sweep runs.
+        self.restore_open()
         self._thread = threading.Thread(target=self._run, daemon=True, name="position-monitor")
         self._thread.start()
         logger.info("Position monitor started")
@@ -183,8 +193,20 @@ class PositionMonitor:
                 "break_even_pct": float(break_even_pct),
                 "trail_pct": float(trail_pct),
                 "max_profit": 0.0,
+                "_misses": 0,          # consecutive empty polls (see _check)
                 "rec": rec,
             }
+        # Publish the record to the dataset IMMEDIATELY, not on the next
+        # _persist_open sweep (every ~15 cycles, which can be minutes away with
+        # dozens of positions). Until it is in `trade_paths` the position exists
+        # ONLY in memory, so a crash/restart loses it entirely — the next process
+        # then cannot restore it and the AutoTrader's adoption sweep installs a
+        # FRESH ATR stop that may already be breached, liquidating the position
+        # on arrival (observed 2026-09-21: ~11 positions sold at -0.11..-0.92
+        # within seconds of adopting, stops of -0.12).
+        with _paths_lock:
+            trade_paths[cid] = rec
+        save_trade_paths()         # throttled (<=1 write / 30s)
 
     def is_tracked(self, contract_id):
         with self._lock:
@@ -218,6 +240,123 @@ class PositionMonitor:
         with self._lock:
             return len(self._limits)
 
+    def _register(self, cid, rec):
+        """Register ONE persisted record for SL/TP enforcement.
+
+        Returns False for a record with no geometry (a manual/observational trade
+        has nothing to enforce) — never invent a stop that was never set.
+        """
+        try:
+            sl = float(rec.get("stop_loss") or 0)
+            tp = float(rec.get("take_profit") or 0)
+        except (TypeError, ValueError):
+            return False
+        if not sl and not tp:
+            return False
+        live = rec.pop("_live", None) or {}
+        with self._lock:
+            self._limits[cid] = {
+                "symbol": rec.get("symbol") or "",
+                "stop_loss": sl,
+                "take_profit": tp,
+                # Reinstate the DYNAMIC stop (break-even/trailing may have moved
+                # it) rather than resetting to -stop_loss, which would silently
+                # give back profit the position had already locked in.
+                "stop": float(live.get("stop", -sl)),
+                "break_even": bool(live.get("be")),
+                "trail": bool(live.get("trail")),
+                "break_even_pct": float(live.get("be_pct") or 0.5),
+                "trail_pct": float(live.get("trail_pct") or 0.5),
+                "max_profit": float(live.get("max_profit") or 0.0),
+                "_misses": 0,
+                "restored": True,
+                "rec": rec,
+            }
+        return True
+
+    @staticmethod
+    def _persisted_open():
+        """Open (not-yet-closed) records from the persisted path dataset."""
+        with _paths_lock:
+            return {cid: dict(r) for cid, r in trade_paths.items()
+                    if isinstance(r, dict) and not r.get("t_close")}
+
+    def restore_open(self, only=None):
+        """Re-register positions that were still open when the process stopped.
+
+        Tracking lives ONLY in memory (`self._limits`), so a restart used to
+        leave every open position with NO stop and NO target until the
+        AutoTrader's adoption sweep ran (up to 300s later) — and that sweep
+        REFUSES any position whose `multiplier x 1.5 x ATR` exceeds its
+        timeframe risk cap, leaving it with no stop at all and only Deriv's
+        -100% close to end it. That is the measured cause of trades losing far
+        more than their stop-loss.
+
+        `trade_paths.json` already persists every open position (symbol, stop,
+        target, direction, timeframe, entry metadata), so we can reinstate
+        EXACTLY the geometry the position was opened with: no ATR re-estimation,
+        so neither the adoption bug (a 1m ATR applied to a 30m position) nor the
+        affordability test can silently drop a live position.
+
+        `only` restricts registration to those contract ids (the live portfolio).
+        The original record is REUSED, so MAE/MFE sampling continues across the
+        restart instead of starting a fresh path.
+        """
+        restored = 0
+        for cid, rec in self._persisted_open().items():
+            if only is not None and cid not in only:
+                continue
+            if self.is_tracked(cid):
+                continue
+            if self._register(cid, rec):
+                restored += 1
+        if restored:
+            logger.info("Position monitor restored %d open position(s) from %s "
+                        "with their original SL/TP", restored,
+                        os.path.basename(PATHS_FILE))
+        return restored
+
+    def drop_missing(self, live_ids):
+        """Retire persisted records whose contract is NO LONGER open.
+
+        Such a record is a PHANTOM: the position settled while the process was
+        down. Re-registering it would install a stop on a contract that no longer
+        exists and inflate the "unprotected position" count. Found in testing —
+        a batch of stake-relative-era records (sl=0.20/tp=5.00) were still marked
+        open long after their contracts had gone, which is exactly the geometry
+        measured to be broken (17/17 stop-outs).
+        """
+        dropped = 0
+        for cid, rec in self._persisted_open().items():
+            if cid in live_ids:
+                continue
+            if self.is_tracked(cid):
+                self.untrack(cid, reason="closed_while_down")
+            else:
+                self._flush(cid, {"rec": rec}, "closed_while_down")
+            dropped += 1
+        if dropped:
+            logger.info("Position monitor retired %d stale record(s) that settled "
+                        "while the bot was down", dropped)
+        return dropped
+
+    async def _restore_live(self, api):
+        """Startup reconciliation: protect ONLY what is genuinely still open."""
+        try:
+            port = await api.get_portfolio()
+            pt = port.get("portfolio", {}) if isinstance(port, dict) else {}
+            contracts = pt.get("contracts", []) if isinstance(pt, dict) else []
+            live = {int(c["contract_id"]) for c in contracts if c.get("contract_id")}
+        except Exception as e:
+            logger.warning("Restore: portfolio fetch failed (%r) — restoring every "
+                           "persisted open record WITHOUT verification", e)
+            self.restore_open()
+            return
+        self.drop_missing(live)
+        n = self.restore_open(only=live)
+        logger.info("Position monitor reconcile: %d position(s) re-protected, "
+                    "account reports %d open", n, len(live))
+
     # ---- trade-path recording -------------------------------------------
     @staticmethod
     def _sample(lim, profit):
@@ -247,6 +386,7 @@ class PositionMonitor:
         rec = lim.get("rec")
         if not rec:
             return
+        rec.pop("_live", None)        # internal live-state snapshot, not dataset
         rec["t_close"] = time.time()
         rec["hold_s"] = round(rec["t_close"] - (rec.get("t_open") or rec["t_close"]), 1)
         if reason:
@@ -277,8 +417,23 @@ class PositionMonitor:
         """Snapshot LIVE records so in-flight positions survive a crash/restart.
         A completed record (t_close set) is never overwritten."""
         with self._lock:
-            recs = {cid: dict(lim["rec"])
-                    for cid, lim in self._limits.items() if lim.get("rec")}
+            recs = {}
+            for cid, lim in self._limits.items():
+                r = lim.get("rec")
+                if not r:
+                    continue
+                r = dict(r)
+                # The reward/stop ENFORCEMENT state (not just the opening
+                # geometry) must survive too, or a restored position would come
+                # back with a stale stop level. Underscore = internal; stripped
+                # again in _flush so the dataset stays clean.
+                r["_live"] = {"stop": lim.get("stop"),
+                               "max_profit": lim.get("max_profit"),
+                               "be": lim.get("break_even"),
+                               "trail": lim.get("trail"),
+                               "be_pct": lim.get("break_even_pct"),
+                               "trail_pct": lim.get("trail_pct")}
+                recs[cid] = r
         if not recs:
             return
         with _paths_lock:
@@ -309,6 +464,18 @@ class PositionMonitor:
                 tracked = dict(self._limits)
 
             if not tracked:
+                if not self._reconciled:
+                    # Nothing tracked YET — but persisted records may still need
+                    # reconciling, and this branch is where the loop would
+                    # otherwise sleep forever and never restore them.
+                    if api is None:
+                        api = DerivAPI(app_id=Config.DERIV_APP_ID,
+                                       api_token=Config.DERIV_API_TOKEN,
+                                       account_type=Config.DERIV_ACCOUNT_TYPE)
+                        await api.connect(authenticated=True)
+                    self._reconciled = True
+                    await self._restore_live(api)
+                    continue          # re-read _limits (now populated)
                 if api is not None:
                     await self._close(api)
                     api = None
@@ -321,6 +488,10 @@ class PositionMonitor:
                                account_type=Config.DERIV_ACCOUNT_TYPE)
                 await api.connect(authenticated=True)
                 logger.info("Position monitor connected (authenticated)")
+                if not self._reconciled:
+                    self._reconciled = True
+                    await self._restore_live(api)
+                    continue          # re-read _limits before polling
 
             try:
                 await self._check(api, tracked)
@@ -347,14 +518,23 @@ class PositionMonitor:
         for cid, lim in tracked.items():
             if not self._running:
                 return
+            # ISOLATE EACH CONTRACT. This loop previously let any exception
+            # escape; a ConnectionError re-raised to _loop, which reconnects and
+            # RESTARTS THE PASS FROM THE FIRST CONTRACT — so with ~30 positions
+            # one slow/dead contract could starve every contract after it, cycle
+            # after cycle (observed as records with samples=0 after 49 minutes of
+            # being tracked). A failure on one position must never blind the rest.
             try:
                 resp = await api._send_request(
                     {"proposal_open_contract": 1, "contract_id": int(cid)}
                 )
             except ConnectionError:
                 raise
+            except Exception as e:
+                logger.debug("Position monitor poll failed for %s: %r", cid, e)
+                resp = None
 
-            poc = resp.get("proposal_open_contract") or {}
+            poc = (resp or {}).get("proposal_open_contract") or {}
             status = poc.get("status")
             profit = poc.get("profit")
 
@@ -363,7 +543,19 @@ class PositionMonitor:
                 self.untrack(cid, reason="settled")
                 continue
             if profit is None:
+                # No data. A healthy contract answers on the next poll, but one
+                # that closed while the bot was DOWN can stay unknown to this API
+                # forever — it must not sit in the tracked set pretending to be
+                # protected. Count consecutive empties and drop it after a few.
+                miss = int(lim.get("_misses") or 0) + 1
+                lim["_misses"] = miss
+                if miss >= MISS_LIMIT:
+                    self.untrack(cid, reason="vanished")
+                    logger.warning("Position monitor dropped %s after %d empty "
+                                   "response(s) — closed while the bot was down?",
+                                   cid, miss)
                 continue
+            lim["_misses"] = 0
 
             profit = float(profit)
             self._sample(lim, profit)
