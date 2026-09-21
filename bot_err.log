@@ -334,3 +334,12 @@
 2026-09-21 09:42:17,502 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 09:42:17] "GET /api/positions HTTP/1.1" 200 -
 2026-09-21 09:42:18,733 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 09:42:18] "GET /api/positions HTTP/1.1" 200 -
 2026-09-21 09:42:22,152 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 09:42:22] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 09:42:23,134 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 09:42:23] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 09:42:23,230 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 09:42:23] "GET /api/paths HTTP/1.1" 200 -
+2026-09-21 09:42:23,516 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 09:42:23] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 09:42:25,151 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 09:42:25] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 09:42:25,152 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 09:42:25] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 09:42:25,177 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 09:42:25] "GET /api/paths HTTP/1.1" 200 -
+2026-09-21 09:42:25,618 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 09:42:25] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 09:42:26,743 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 09:42:26] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 09:42:26,826 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 09:42:26] "GET /api/auto/status HTTP/1.1" 200 -
