@@ -1345,6 +1345,33 @@ def get_positions():
 
     try:
         contracts = _deriv_call(_portfolio, authenticated=True)
+        # A DEAD authenticated session answers with an EMPTY portfolio instead of
+        # an error, so it is indistinguishable from "you have no open positions"
+        # (measured 2026-09-21: this endpoint returned 0 while 18 were open, and
+        # /api/history returned 0 rows at the same time). The position monitor's
+        # tracked count is independent evidence that positions DO exist, so when
+        # the two disagree the CONNECTION is the liar: drop the session so the
+        # next call re-authenticates, then retry once.
+        degraded = False
+        try:
+            tracked = position_monitor.tracked_count() if position_monitor else 0
+        except Exception:
+            tracked = 0
+        if not contracts and tracked:
+            logger.warning("Portfolio came back EMPTY while %d position(s) are tracked "
+                           "— forcing re-authentication and retrying", tracked)
+            try:
+                _get_shared_conn().invalidate()
+            except Exception as e:
+                logger.warning("Could not invalidate the shared connection: %r", e)
+            try:
+                contracts = _deriv_call(_portfolio, authenticated=True)
+            except Exception as e:
+                logger.warning("Portfolio retry after re-auth failed: %r", e)
+            degraded = not contracts
+            if not degraded:
+                logger.info("Portfolio retry after re-auth succeeded (%d contract(s))",
+                            len(contracts))
         cutoff = session.get("history_cutoff") or 0
         positions = []
         for c in contracts:
@@ -1374,7 +1401,13 @@ def get_positions():
             except (TypeError, ValueError):
                 continue
         positions.sort(key=lambda p: p["purchase_time"] or 0, reverse=True)
-        return jsonify({"success": True, "positions": positions})
+        # `degraded` tells the UI the count is real but unreadable, rather than
+        # letting a bare empty list imply "no positions".
+        # NOTE: do NOT pass a status code INSIDE jsonify — jsonify(*args) treats a
+        # second positional as another data object and returns a JSON ARRAY
+        # ([{...}, 200]) instead of an object, which breaks every consumer.
+        return jsonify({"success": True, "positions": positions,
+                        "tracked": tracked, "degraded": degraded})
 
     except Exception as e:
         logger.error(f"Error fetching positions: {e}")

@@ -154,6 +154,31 @@ class DerivAPI:
 
             # Background listener routes responses to pending requests.
             self._listen_task = asyncio.ensure_future(self._listen())
+
+            # VERIFY that an authenticated connection is actually USABLE. A bad
+            # OTP session still connects fine and then answers every request with an
+            # EMPTY payload — indistinguishable from "you have no positions", and it
+            # silently disables SL/TP enforcement because the monitor can read no
+            # live P/L (measured 2026-09-21: /api/positions returned 0 while 18 were
+            # open and every proposal_open_contract probe came back blank).
+            # Failing HERE means the caller rebuilds the connection instead of
+            # holding a zombie that looks healthy.
+            if authenticated:
+                try:
+                    bal = await asyncio.wait_for(self.get_balance(),
+                                                 timeout=min(timeout, 20))
+                except Exception as e:
+                    raise ConnectionError(
+                        f"authenticated connection failed the balance probe: {e!r}"
+                    ) from None
+                info = bal.get("balance") if isinstance(bal, dict) else None
+                amount = info.get("balance") if isinstance(info, dict) else None
+                if amount is None:
+                    raise ConnectionError(
+                        "authenticated connection returned NO balance — refusing a "
+                        "zombie session (requests would silently come back empty)"
+                    )
+                logger.info("Authenticated connection verified (balance=%s)", amount)
             return True
         except asyncio.TimeoutError:
             logger.error("Timed out connecting to Deriv WebSocket API")
@@ -488,6 +513,16 @@ class SharedDerivConnection:
     async def _run_on_loop(self, coro_factory, token, timeout):
         api = await self._ensure(token)
         return await asyncio.wait_for(coro_factory(api), timeout=timeout)
+
+    def invalidate(self):
+        """Drop the current session so the next call RE-AUTHENTICATES.
+
+        Needed because a dead authenticated session still has an OPEN socket, so
+        `_is_live()` alone would keep reusing it forever while every request came
+        back empty. Call this whenever an authenticated read returns nothing.
+        """
+        self._api = None
+        self._token = None
 
     def _is_live(self):
         api = self._api
