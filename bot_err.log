@@ -1,211 +1,205 @@
-2026-09-21 13:10:22,605 [INFO] live_stream: Live Deriv stream started (symbol=R_75)
-2026-09-21 13:10:22,608 [INFO] position_monitor: Position monitor restored 17 open position(s) from trade_paths.json with their original SL/TP
-2026-09-21 13:10:22,616 [INFO] position_monitor: Position monitor started
-2026-09-21 13:10:22,631 [INFO] auto_trader: Auto-trader started (enabled=True exit_on_reversal=True)
-2026-09-21 13:10:22,635 [INFO] strategy_learner: Strategy learner started (refit every 900s, min 30 trades/group)
-2026-09-21 13:10:22,923 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+2026-09-21 13:18:26,302 [INFO] live_stream: Live Deriv stream started (symbol=R_75)
+2026-09-21 13:18:26,312 [INFO] position_monitor: Position monitor restored 16 open position(s) from trade_paths.json with their original SL/TP
+2026-09-21 13:18:26,332 [INFO] position_monitor: Position monitor started
+2026-09-21 13:18:26,359 [INFO] auto_trader: Auto-trader started (enabled=True exit_on_reversal=True)
+2026-09-21 13:18:26,371 [INFO] strategy_learner: Strategy learner started (refit every 900s, min 30 trades/group)
+2026-09-21 13:18:26,947 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
  * Running on all addresses (0.0.0.0)
  * Running on http://127.0.0.1:5000
  * Running on http://192.168.30.66:5000
-2026-09-21 13:10:22,924 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
-2026-09-21 13:10:23,109 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:23] "GET /api/balance/stream HTTP/1.1" 200 -
-2026-09-21 13:10:23,228 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:23] "GET /api/stream HTTP/1.1" 200 -
-2026-09-21 13:10:23,308 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:23] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:10:23,743 [INFO] live_stream: Live stream connected to Deriv (public)
-2026-09-21 13:10:23,745 [INFO] live_stream: Live stream subscribed to R_75 @ 300s
-2026-09-21 13:10:23,794 [INFO] deriv_api: Connected to Deriv WebSocket API (public)
-2026-09-21 13:10:23,794 [INFO] deriv_api: Shared Deriv connection established (type=demo public)
-2026-09-21 13:10:24,490 [INFO] deriv_api: Authenticated via OTP (type=demo)
-2026-09-21 13:10:24,622 [INFO] deriv_api: Authenticated via OTP (type=demo)
-2026-09-21 13:10:24,723 [INFO] deriv_api: Authenticated via OTP (type=demo)
-2026-09-21 13:10:25,628 [INFO] deriv_api: Connected to Deriv WebSocket API (authenticated)
-2026-09-21 13:10:25,710 [INFO] deriv_api: Connected to Deriv WebSocket API (authenticated)
-2026-09-21 13:10:25,743 [INFO] deriv_api: Connected to Deriv WebSocket API (authenticated)
-2026-09-21 13:10:25,957 [INFO] deriv_api: Authenticated connection verified (balance=9773.05)
-2026-09-21 13:10:25,960 [INFO] deriv_api: Shared Deriv connection established (type=demo)
-2026-09-21 13:10:26,019 [INFO] deriv_api: Authenticated connection verified (balance=9773.05)
-2026-09-21 13:10:26,022 [INFO] position_monitor: Position monitor connected (authenticated)
-2026-09-21 13:10:26,047 [INFO] deriv_api: Authenticated connection verified (balance=9773.05)
-2026-09-21 13:10:26,048 [INFO] deriv_api: Shared Deriv connection established (type=demo)
-2026-09-21 13:10:26,611 [INFO] position_monitor: Position monitor reconcile: 0 position(s) re-protected, account reports 17 open
-2026-09-21 13:10:26,824 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:26] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:10:27,233 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:27] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:10:27,762 [INFO] __main__: Multiplier cache warmed for 10 symbols
-2026-09-21 13:10:28,032 [INFO] auto_trader: AutoTrader profit-target check (open-pnl): open_pnl=0.24 cash=9773.05 n_open=17 net=0.24 (target 8.00)
-2026-09-21 13:10:29,670 [INFO] deriv_api: Connected to Deriv WebSocket API (public)
-2026-09-21 13:10:29,674 [INFO] deriv_api: Shared Deriv connection established (type=demo public)
-2026-09-21 13:10:29,790 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:29] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:10:30,229 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:30] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:10:33,109 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:33] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:10:33,878 [INFO] __main__: Results backfill pass 1: 1290 resolved, 17 still open
-2026-09-21 13:10:37,843 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:37] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:10:38,169 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:38] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:10:40,038 [INFO] __main__: Results backfill pass 2: 1290 resolved, 17 still open
-2026-09-21 13:10:43,140 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:43] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:10:45,191 [INFO] auto_trader: Auto-trader closed 1 position(s) (same-tf reversal)
-2026-09-21 13:10:45,745 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:45] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:10:46,090 [INFO] auto_trader: Auto-trade opened BUY 1HZ10V @ 37% lot=1.000 mult=400 -> cid=13832633059 SL=$0.20 TP=$0.80 [atr stop 0.05% of price = 1.5x ATR, risk 20.0% of stake]
-2026-09-21 13:10:46,092 [INFO] auto_trader: AutoTrader cycle: opened=['1HZ10V:BUY@37% (1m)'] closed=['1HZ10V:SELL:1mx1']
-2026-09-21 13:10:46,189 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:46] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:10:46,346 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:46] "GET /api/analysis HTTP/1.1" 200 -
-2026-09-21 13:10:46,357 [INFO] __main__: Results backfill pass 3: 1291 resolved, 17 still open
-2026-09-21 13:10:46,553 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:46] "GET /api/analysis HTTP/1.1" 200 -
-2026-09-21 13:10:53,111 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:53] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:10:53,780 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:53] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:10:54,361 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:10:54] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:11:01,337 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:01] "GET / HTTP/1.1" 200 -
-2026-09-21 13:11:01,783 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:01] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:11:01,790 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:01] "GET /static/css/style.css?v=47 HTTP/1.1" 200 -
-2026-09-21 13:11:01,791 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:01] "GET /static/js/app.js?v=67 HTTP/1.1" 200 -
-2026-09-21 13:11:01,793 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:01] "GET /static/js/chart.js?v=27 HTTP/1.1" 200 -
-2026-09-21 13:11:01,797 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:01] "GET /static/js/indicators.js?v=41 HTTP/1.1" 200 -
-2026-09-21 13:11:01,816 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:01] "GET /static/js/theme.js?v=15 HTTP/1.1" 200 -
-2026-09-21 13:11:01,817 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:01] "GET /static/js/trading.js?v=44 HTTP/1.1" 200 -
-2026-09-21 13:11:01,906 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:01] "GET /api/multipliers?symbol=R_75 HTTP/1.1" 200 -
-2026-09-21 13:11:01,910 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:01] "GET /api/config HTTP/1.1" 200 -
-2026-09-21 13:11:01,943 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:01] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:11:02,004 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:02] "POST /api/auto/config HTTP/1.1" 200 -
-2026-09-21 13:11:02,266 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:02] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:11:02,289 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:02] "POST /api/connect HTTP/1.1" 200 -
-2026-09-21 13:11:02,314 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:02] "GET /api/balance/stream HTTP/1.1" 200 -
-2026-09-21 13:11:02,397 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:02] "POST /api/candles HTTP/1.1" 200 -
-2026-09-21 13:11:02,817 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:02] "POST /api/candles HTTP/1.1" 200 -
-2026-09-21 13:11:02,823 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:02] "GET /api/stream HTTP/1.1" 200 -
-2026-09-21 13:11:02,839 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:02] "POST /api/candles HTTP/1.1" 200 -
-2026-09-21 13:11:02,929 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:02] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:11:03,520 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:03] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:11:06,686 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:06] "POST /api/scanner HTTP/1.1" 200 -
-2026-09-21 13:11:07,449 [INFO] live_balance_stream: Balance stream connected (authenticated)
-2026-09-21 13:11:10,810 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:10] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:11:11,505 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:11] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:11:11,944 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:11] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:11:18,822 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:18] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:11:19,195 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:19] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:11:21,942 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:21] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:11:26,688 [WARNING] __main__: Portfolio came back EMPTY while 17 position(s) are tracked - forcing re-authentication and retrying
-2026-09-21 13:11:28,093 [INFO] deriv_api: Authenticated via OTP (type=demo)
-2026-09-21 13:11:28,127 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:28] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:11:29,149 [INFO] deriv_api: Connected to Deriv WebSocket API (authenticated)
-2026-09-21 13:11:29,514 [INFO] deriv_api: Authenticated connection verified (balance=9773.29)
-2026-09-21 13:11:29,515 [INFO] deriv_api: Shared Deriv connection established (type=demo)
-2026-09-21 13:11:29,969 [INFO] __main__: Portfolio retry after re-auth succeeded (17 contract(s))
-2026-09-21 13:11:29,971 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:29] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:11:31,955 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:31] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:11:34,799 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:34] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:11:35,252 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:35] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:11:41,954 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:41] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:11:42,825 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:42] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:11:43,284 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:43] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:11:48,256 [INFO] auto_trader: AutoTrader profit-target check (open-pnl): open_pnl=-0.45 cash=9773.29 n_open=17 net=-0.45 (target 8.00)
-2026-09-21 13:11:50,821 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:50] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:11:51,513 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:51] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:11:51,944 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:51] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:11:59,177 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:59] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:11:59,780 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:11:59] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:12:01,947 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:01] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:12:02,769 [INFO] auto_trader: Auto-trade opened SELL 1HZ100V @ 43% lot=1.000 mult=40 -> cid=13832767359 SL=$0.46 TP=$1.82 [atr stop 1.14% of price = 1.5x ATR, risk 46.0% of stake]
-2026-09-21 13:12:02,770 [INFO] auto_trader: AutoTrader cycle: opened=['1HZ100V:SELL@43% (15m)'] closed=[]
-2026-09-21 13:12:06,784 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:06] "POST /api/scanner HTTP/1.1" 200 -
-2026-09-21 13:12:06,854 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:06] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:12:07,527 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:07] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:12:11,951 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:11] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:12:14,835 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:14] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:12:15,520 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:15] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:12:21,955 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:21] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:12:22,835 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:22] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:12:23,279 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:23] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:12:30,965 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:30] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:12:31,712 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:31] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:12:31,951 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:31] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:12:38,856 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:38] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:12:39,555 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:39] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:12:41,953 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:41] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:12:46,863 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:46] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:12:47,517 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:47] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:12:51,951 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:51] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:12:54,864 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:54] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:12:55,530 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:12:55] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:13:01,953 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:01] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:13:02,881 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:02] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:13:03,530 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:03] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:13:05,102 [INFO] auto_trader: AutoTrader profit-target check (open-pnl): open_pnl=-1.06 cash=9772.29 n_open=18 net=-1.06 (target 8.00)
-2026-09-21 13:13:07,685 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:07] "POST /api/scanner HTTP/1.1" 200 -
-2026-09-21 13:13:10,833 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:10] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:13:11,561 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:11] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:13:11,950 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:11] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:13:18,693 [INFO] auto_trader: AutoTrader cycle: 3 signal(s), 0 above min_strength, refused={'would_hedge': 1, 'at_position_cap': 1, 'cooldown': 1}
-2026-09-21 13:13:18,922 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:18] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:13:19,553 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:19] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:13:21,951 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:21] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:13:25,369 [INFO] position_monitor: Stop-loss hit for 13831778339: profit=-0.26 (stop -0.24)
-2026-09-21 13:13:26,943 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:26] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:13:27,285 [INFO] __main__: Results reconciler settled 1 trade(s)
-2026-09-21 13:13:27,545 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:27] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:13:28,925 [INFO] position_monitor: Stop-loss hit for 13832237759: profit=-0.26 (stop -0.26)
-2026-09-21 13:13:31,954 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:31] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:13:34,857 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:34] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:13:35,598 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:35] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:13:41,949 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:41] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:13:42,858 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:42] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:13:43,538 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:43] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:13:43,583 [INFO] __main__: Results reconciler settled 1 trade(s)
-2026-09-21 13:13:50,984 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:50] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:13:51,504 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:51] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:13:51,949 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:51] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:13:58,793 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:58] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:13:59,297 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:13:59] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:14:01,950 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:01] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:14:06,549 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:06] "POST /api/scanner HTTP/1.1" 200 -
-2026-09-21 13:14:06,859 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:06] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:14:07,531 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:07] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:14:11,950 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:11] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:14:14,867 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:14] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:14:15,522 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:15] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:14:20,683 [INFO] auto_trader: AutoTrader profit-target check (open-pnl): open_pnl=-1.12 cash=9773.77 n_open=16 net=-1.12 (target 8.00)
-2026-09-21 13:14:21,948 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:21] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:14:22,841 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:22] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:14:23,281 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:23] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:14:31,210 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:31] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:14:31,957 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:31] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:14:31,993 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:31] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:14:34,395 [INFO] auto_trader: Auto-trade opened BUY 1HZ10V @ 80% lot=1.000 mult=400 -> cid=13833003879 SL=$0.20 TP=$0.80 [atr stop 0.05% of price = 1.5x ATR, risk 20.0% of stake]
-2026-09-21 13:14:34,397 [INFO] auto_trader: AutoTrader cycle: opened=['1HZ10V:BUY@80% (1m)'] closed=[]
-2026-09-21 13:14:38,960 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:38] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:14:39,522 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:39] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:14:41,949 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:41] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:14:46,842 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:46] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:14:47,305 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:47] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:14:51,946 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:51] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:14:54,930 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:54] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:14:55,533 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:14:55] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:15:01,943 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:01] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:15:03,019 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:03] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:15:03,527 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:03] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:15:07,054 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:07] "POST /api/scanner HTTP/1.1" 200 -
-2026-09-21 13:15:10,926 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:10] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:15:11,524 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:11] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:15:11,944 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:11] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:15:17,582 [INFO] position_monitor: Stop-loss hit for 13832117819: profit=-0.21 (stop -0.20)
-2026-09-21 13:15:18,868 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:18] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:15:19,309 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:19] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:15:21,946 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:21] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:15:22,838 [INFO] __main__: Results reconciler settled 1 trade(s)
-2026-09-21 13:15:26,847 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:26] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:15:27,562 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:27] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:15:31,947 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:31] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:15:34,848 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:34] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:15:35,567 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:35] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:15:36,260 [INFO] auto_trader: AutoTrader profit-target check (open-pnl): open_pnl=-0.07 cash=9773.56 n_open=16 net=-0.07 (target 8.00)
-2026-09-21 13:15:41,939 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:41] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:15:42,858 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:42] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:15:43,499 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:43] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:15:47,989 [INFO] auto_trader: AutoTrader cycle: 4 signal(s), 1 above min_strength, refused={'cooldown': 1, 'at_position_cap': 1}
-2026-09-21 13:15:50,803 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:50] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:15:51,302 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:51] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:15:51,939 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:51] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:15:58,803 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:58] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:15:59,301 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:15:59] "GET /api/history HTTP/1.1" 200 -
-2026-09-21 13:16:01,939 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:16:01] "GET /api/auto/status HTTP/1.1" 200 -
-2026-09-21 13:16:06,777 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:16:06] "POST /api/scanner HTTP/1.1" 200 -
-2026-09-21 13:16:06,902 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:16:06] "GET /api/positions HTTP/1.1" 200 -
-2026-09-21 13:16:07,502 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:16:07] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:18:26,953 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2026-09-21 13:18:30,499 [INFO] live_stream: Live stream connected to Deriv (public)
+2026-09-21 13:18:30,502 [INFO] live_stream: Live stream subscribed to R_75 @ 300s
+2026-09-21 13:18:30,682 [INFO] deriv_api: Connected to Deriv WebSocket API (public)
+2026-09-21 13:18:30,683 [INFO] deriv_api: Shared Deriv connection established (type=demo public)
+2026-09-21 13:18:31,160 [INFO] deriv_api: Authenticated via OTP (type=demo)
+2026-09-21 13:18:31,395 [INFO] deriv_api: Authenticated via OTP (type=demo)
+2026-09-21 13:18:31,528 [INFO] deriv_api: Authenticated via OTP (type=demo)
+2026-09-21 13:18:32,127 [INFO] deriv_api: Connected to Deriv WebSocket API (authenticated)
+2026-09-21 13:18:32,497 [INFO] deriv_api: Connected to Deriv WebSocket API (authenticated)
+2026-09-21 13:18:32,594 [INFO] deriv_api: Authenticated connection verified (balance=9773.56)
+2026-09-21 13:18:32,595 [INFO] position_monitor: Position monitor connected (authenticated)
+2026-09-21 13:18:32,609 [INFO] deriv_api: Connected to Deriv WebSocket API (authenticated)
+2026-09-21 13:18:32,802 [INFO] deriv_api: Authenticated connection verified (balance=9773.56)
+2026-09-21 13:18:32,803 [INFO] deriv_api: Shared Deriv connection established (type=demo)
+2026-09-21 13:18:32,903 [INFO] deriv_api: Authenticated connection verified (balance=9773.56)
+2026-09-21 13:18:32,904 [INFO] deriv_api: Shared Deriv connection established (type=demo)
+2026-09-21 13:18:33,098 [INFO] position_monitor: Position monitor reconcile: 0 position(s) re-protected, account reports 16 open
+2026-09-21 13:18:33,254 [INFO] __main__: Multiplier cache warmed for 10 symbols
+2026-09-21 13:18:34,600 [INFO] auto_trader: AutoTrader profit-target check (open-pnl): open_pnl=-0.81 cash=9773.56 n_open=16 net=-0.81 (target 8.00)
+2026-09-21 13:18:36,068 [INFO] deriv_api: Connected to Deriv WebSocket API (public)
+2026-09-21 13:18:36,070 [INFO] deriv_api: Shared Deriv connection established (type=demo public)
+2026-09-21 13:18:38,466 [INFO] __main__: Results backfill pass 1: 1294 resolved, 16 still open
+2026-09-21 13:18:44,306 [INFO] position_monitor: Stop-loss hit for 13833003879: profit=-0.21 (stop -0.20)
+2026-09-21 13:18:44,950 [INFO] __main__: Results backfill pass 2: 1295 resolved, 15 still open
+2026-09-21 13:18:48,201 [INFO] auto_trader: Auto-trade opened SELL 1HZ100V @ 70% lot=1.000 mult=40 -> cid=13833420759 SL=$0.44 TP=$1.74 [atr stop 1.09% of price = 1.5x ATR, risk 44.0% of stake]
+2026-09-21 13:18:48,203 [INFO] auto_trader: AutoTrader cycle: opened=['1HZ100V:SELL@70% (15m)'] closed=[]
+2026-09-21 13:18:51,231 [INFO] __main__: Results backfill pass 3: 1295 resolved, 16 still open
+2026-09-21 13:18:59,407 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:18:59] "GET / HTTP/1.1" 200 -
+2026-09-21 13:19:00,161 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:00] "GET /static/js/app.js?v=67 HTTP/1.1" 200 -
+2026-09-21 13:19:00,176 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:00] "GET /static/js/theme.js?v=15 HTTP/1.1" 200 -
+2026-09-21 13:19:00,208 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:00] "GET /static/js/indicators.js?v=41 HTTP/1.1" 200 -
+2026-09-21 13:19:00,210 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:00] "GET /static/css/style.css?v=48 HTTP/1.1" 200 -
+2026-09-21 13:19:00,221 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:00] "GET /static/js/trading.js?v=44 HTTP/1.1" 200 -
+2026-09-21 13:19:00,224 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:00] "GET /static/js/chart.js?v=27 HTTP/1.1" 200 -
+2026-09-21 13:19:00,772 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:00] "GET /api/multipliers?symbol=R_75 HTTP/1.1" 200 -
+2026-09-21 13:19:00,785 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:00] "GET /api/config HTTP/1.1" 200 -
+2026-09-21 13:19:00,864 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:00] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:19:01,013 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:01] "POST /api/auto/config HTTP/1.1" 200 -
+2026-09-21 13:19:01,261 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:01] "POST /api/candles HTTP/1.1" 200 -
+2026-09-21 13:19:01,295 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:01] "POST /api/connect HTTP/1.1" 200 -
+2026-09-21 13:19:01,495 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:01] "GET /api/stream HTTP/1.1" 200 -
+2026-09-21 13:19:01,719 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:01] "POST /api/candles HTTP/1.1" 200 -
+2026-09-21 13:19:01,725 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:01] "GET /api/balance/stream HTTP/1.1" 200 -
+2026-09-21 13:19:01,806 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:01] "POST /api/candles HTTP/1.1" 200 -
+2026-09-21 13:19:02,051 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:02] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:19:02,581 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:02] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:19:05,589 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:05] "POST /api/scanner HTTP/1.1" 200 -
+2026-09-21 13:19:06,497 [INFO] live_balance_stream: Balance stream connected (authenticated)
+2026-09-21 13:19:09,926 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:09] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:19:10,603 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:10] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:19:10,869 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:10] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:19:17,919 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:17] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:19:18,651 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:18] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:19:20,868 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:20] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:19:25,975 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:25] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:19:26,437 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:26] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:19:30,882 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:30] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:19:31,001 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:31] "GET / HTTP/1.1" 200 -
+2026-09-21 13:19:31,164 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:31] "GET /static/js/chart.js?v=27 HTTP/1.1" 200 -
+2026-09-21 13:19:31,165 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:31] "GET /static/css/style.css?v=48 HTTP/1.1" 200 -
+2026-09-21 13:19:31,169 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:31] "GET /static/js/indicators.js?v=41 HTTP/1.1" 200 -
+2026-09-21 13:19:31,251 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:31] "GET /static/js/trading.js?v=44 HTTP/1.1" 200 -
+2026-09-21 13:19:31,280 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:31] "GET /static/js/app.js?v=67 HTTP/1.1" 200 -
+2026-09-21 13:19:31,295 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:31] "GET /static/js/theme.js?v=15 HTTP/1.1" 200 -
+2026-09-21 13:19:31,411 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:31] "GET /static/css/style.css?v=48 HTTP/1.1" 200 -
+2026-09-21 13:19:31,421 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:31] "GET /api/multipliers?symbol=R_75 HTTP/1.1" 200 -
+2026-09-21 13:19:31,426 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:31] "GET /api/config HTTP/1.1" 200 -
+2026-09-21 13:19:31,489 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:31] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:19:31,887 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:31] "POST /api/candles HTTP/1.1" 200 -
+2026-09-21 13:19:32,671 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:32] "POST /api/connect HTTP/1.1" 200 -
+2026-09-21 13:19:32,742 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:32] "GET /api/stream HTTP/1.1" 200 -
+2026-09-21 13:19:32,952 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:32] "POST /api/auto/config HTTP/1.1" 200 -
+2026-09-21 13:19:33,077 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:33] "POST /api/candles HTTP/1.1" 200 -
+2026-09-21 13:19:33,106 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:33] "POST /api/candles HTTP/1.1" 200 -
+2026-09-21 13:19:33,595 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:33] "GET /api/balance/stream HTTP/1.1" 200 -
+2026-09-21 13:19:33,827 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:33] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:19:34,270 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:34] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:19:36,951 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:36] "POST /api/scanner HTTP/1.1" 200 -
+2026-09-21 13:19:41,435 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:41] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:19:41,838 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:41] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:19:42,271 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:42] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:19:50,108 [INFO] auto_trader: AutoTrader profit-target check (open-pnl): open_pnl=0.12 cash=9773.35 n_open=16 net=0.12 (target 8.00)
+2026-09-21 13:19:50,123 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:50] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:19:50,266 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:50] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:19:51,446 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:51] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:19:57,859 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:57] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:19:58,594 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:19:58] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:20:01,530 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:01] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:20:02,924 [INFO] auto_trader: AutoTrader cycle: 4 signal(s), 1 above min_strength, refused={'at_position_cap': 2}
+2026-09-21 13:20:05,909 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:05] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:20:06,632 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:06] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:20:11,488 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:11] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:20:14,112 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:14] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:20:14,860 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:14] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:20:21,612 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:21] "GET / HTTP/1.1" 200 -
+2026-09-21 13:20:21,644 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:21] "GET /static/css/style.css?v=48 HTTP/1.1" 200 -
+2026-09-21 13:20:21,647 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:21] "GET /static/js/chart.js?v=27 HTTP/1.1" 200 -
+2026-09-21 13:20:21,648 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:21] "GET /static/js/indicators.js?v=41 HTTP/1.1" 200 -
+2026-09-21 13:20:21,690 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:21] "GET /static/js/trading.js?v=44 HTTP/1.1" 200 -
+2026-09-21 13:20:21,705 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:21] "GET /static/js/app.js?v=67 HTTP/1.1" 200 -
+2026-09-21 13:20:21,706 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:21] "GET /static/js/theme.js?v=15 HTTP/1.1" 200 -
+2026-09-21 13:20:21,715 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:21] "GET /api/multipliers?symbol=R_75 HTTP/1.1" 200 -
+2026-09-21 13:20:21,750 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:21] "GET /api/config HTTP/1.1" 200 -
+2026-09-21 13:20:21,759 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:21] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:20:21,799 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:21] "GET /static/css/style.css?v=48 HTTP/1.1" 200 -
+2026-09-21 13:20:21,802 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:21] "POST /api/auto/config HTTP/1.1" 200 -
+2026-09-21 13:20:22,147 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:22] "POST /api/connect HTTP/1.1" 200 -
+2026-09-21 13:20:22,162 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:22] "GET /api/balance/stream HTTP/1.1" 200 -
+2026-09-21 13:20:22,181 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:22] "POST /api/candles HTTP/1.1" 200 -
+2026-09-21 13:20:22,688 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:22] "POST /api/candles HTTP/1.1" 200 -
+2026-09-21 13:20:22,692 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:22] "POST /api/candles HTTP/1.1" 200 -
+2026-09-21 13:20:22,695 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:22] "GET /api/stream HTTP/1.1" 200 -
+2026-09-21 13:20:22,750 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:22] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:20:23,212 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:23] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:20:26,011 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:26] "POST /api/scanner HTTP/1.1" 200 -
+2026-09-21 13:20:30,659 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:30] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:20:31,147 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:31] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:20:31,775 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:31] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:20:38,595 [WARNING] __main__: Portfolio came back EMPTY while 16 position(s) are tracked - forcing re-authentication and retrying
+2026-09-21 13:20:39,839 [INFO] deriv_api: Authenticated via OTP (type=demo)
+2026-09-21 13:20:40,133 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:40] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:20:40,770 [INFO] deriv_api: Connected to Deriv WebSocket API (authenticated)
+2026-09-21 13:20:41,099 [INFO] deriv_api: Authenticated connection verified (balance=9773.35)
+2026-09-21 13:20:41,100 [INFO] deriv_api: Shared Deriv connection established (type=demo)
+2026-09-21 13:20:41,649 [INFO] __main__: Portfolio retry after re-auth succeeded (16 contract(s))
+2026-09-21 13:20:41,651 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:41] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:20:41,766 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:41] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:20:46,627 [WARNING] __main__: Portfolio EMPTY with 16 tracked; re-auth SUPPRESSED (8s since last attempt) - serving 16 cached contract(s)
+2026-09-21 13:20:46,630 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:46] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:20:46,937 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:46] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:20:51,769 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:51] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:20:54,643 [WARNING] __main__: Portfolio EMPTY with 16 tracked; re-auth SUPPRESSED (16s since last attempt) - serving 16 cached contract(s)
+2026-09-21 13:20:54,646 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:54] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:20:54,943 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:20:54] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:21:01,780 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:01] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:21:02,733 [WARNING] __main__: Portfolio EMPTY with 16 tracked; re-auth SUPPRESSED (24s since last attempt) - serving 16 cached contract(s)
+2026-09-21 13:21:02,735 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:02] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:21:03,042 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:03] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:21:06,223 [INFO] auto_trader: AutoTrader profit-target check (open-pnl): open_pnl=1.53 cash=9773.35 n_open=16 net=1.53 (target 8.00)
+2026-09-21 13:21:10,642 [WARNING] __main__: Portfolio EMPTY with 16 tracked; re-auth SUPPRESSED (32s since last attempt) - serving 16 cached contract(s)
+2026-09-21 13:21:10,645 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:10] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:21:10,959 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:10] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:21:11,783 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:11] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:21:18,743 [WARNING] __main__: Portfolio EMPTY with 16 tracked; re-auth SUPPRESSED (40s since last attempt) - serving 16 cached contract(s)
+2026-09-21 13:21:18,759 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:18] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:21:19,055 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:19] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:21:21,071 [INFO] auto_trader: Auto-trade opened SELL 1HZ100V @ 27% lot=1.000 mult=40 -> cid=13833675339 SL=$0.46 TP=$1.83 [atr stop 1.14% of price = 1.5x ATR, risk 46.0% of stake]
+2026-09-21 13:21:21,071 [INFO] auto_trader: AutoTrader cycle: opened=['1HZ100V:SELL@27% (15m)'] closed=[]
+2026-09-21 13:21:21,783 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:21] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:21:26,024 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:26] "POST /api/scanner HTTP/1.1" 200 -
+2026-09-21 13:21:27,138 [WARNING] __main__: Portfolio EMPTY with 17 tracked; re-auth SUPPRESSED (49s since last attempt) - serving 16 cached contract(s)
+2026-09-21 13:21:27,140 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:27] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:21:27,550 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:27] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:21:31,766 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:31] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:21:34,656 [WARNING] __main__: Portfolio EMPTY with 17 tracked; re-auth SUPPRESSED (56s since last attempt) - serving 16 cached contract(s)
+2026-09-21 13:21:34,659 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:34] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:21:34,958 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:34] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:21:41,764 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:41] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:21:42,660 [WARNING] __main__: Portfolio came back EMPTY while 17 position(s) are tracked - forcing re-authentication and retrying
+2026-09-21 13:21:43,945 [INFO] deriv_api: Authenticated via OTP (type=demo)
+2026-09-21 13:21:43,951 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:43] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:21:44,835 [INFO] deriv_api: Connected to Deriv WebSocket API (authenticated)
+2026-09-21 13:21:45,134 [INFO] deriv_api: Authenticated connection verified (balance=9772.35)
+2026-09-21 13:21:45,136 [INFO] deriv_api: Shared Deriv connection established (type=demo)
+2026-09-21 13:21:45,637 [INFO] __main__: Portfolio retry after re-auth succeeded (17 contract(s))
+2026-09-21 13:21:45,638 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:45] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:21:50,606 [WARNING] __main__: Portfolio EMPTY with 17 tracked; re-auth SUPPRESSED (8s since last attempt) - serving 17 cached contract(s)
+2026-09-21 13:21:50,607 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:50] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:21:50,891 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:50] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:21:51,762 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:51] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:21:58,502 [WARNING] __main__: Portfolio EMPTY with 17 tracked; re-auth SUPPRESSED (16s since last attempt) - serving 17 cached contract(s)
+2026-09-21 13:21:58,504 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:58] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:21:58,789 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:21:58] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:22:01,760 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:01] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:22:06,552 [WARNING] __main__: Portfolio EMPTY with 17 tracked; re-auth SUPPRESSED (24s since last attempt) - serving 17 cached contract(s)
+2026-09-21 13:22:06,552 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:06] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:22:06,843 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:06] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:22:11,759 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:11] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:22:14,613 [WARNING] __main__: Portfolio EMPTY with 17 tracked; re-auth SUPPRESSED (32s since last attempt) - serving 17 cached contract(s)
+2026-09-21 13:22:14,614 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:14] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:22:14,899 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:14] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:22:21,762 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:21] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:22:23,427 [WARNING] __main__: Portfolio EMPTY with 17 tracked; re-auth SUPPRESSED (41s since last attempt) - serving 17 cached contract(s)
+2026-09-21 13:22:23,430 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:23] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:22:23,467 [INFO] auto_trader: AutoTrader profit-target check (open-pnl): open_pnl=0.00 cash=9772.35 n_open=0 net=0.00 (target 8.00)
+2026-09-21 13:22:24,053 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:24] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:22:26,109 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:26] "POST /api/scanner HTTP/1.1" 200 -
+2026-09-21 13:22:30,550 [WARNING] __main__: Portfolio EMPTY with 17 tracked; re-auth SUPPRESSED (48s since last attempt) - serving 17 cached contract(s)
+2026-09-21 13:22:30,553 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:30] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:22:30,846 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:30] "GET /api/history HTTP/1.1" 200 -
+2026-09-21 13:22:31,762 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:31] "GET /api/auto/status HTTP/1.1" 200 -
+2026-09-21 13:22:35,022 [INFO] auto_trader: AutoTrader cycle: 5 signal(s), 0 above min_strength, refused={'cooldown': 1}
+2026-09-21 13:22:38,874 [WARNING] __main__: Portfolio EMPTY with 17 tracked; re-auth SUPPRESSED (56s since last attempt) - serving 17 cached contract(s)
+2026-09-21 13:22:38,877 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:38] "GET /api/positions HTTP/1.1" 200 -
+2026-09-21 13:22:39,184 [INFO] werkzeug: 127.0.0.1 - - [21/Sep/2026 13:22:39] "GET /api/history HTTP/1.1" 200 -

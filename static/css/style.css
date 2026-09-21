@@ -1746,3 +1746,255 @@ body {
     .stat-value { font-size: 13px; }
     .stat-card { padding: 7px 10px; }
 }
+
+/* ============================================================================
+   DESIGN SYSTEM v3 — semantic tokens + consistency pass
+   ----------------------------------------------------------------------------
+   WHY: the palette had ~20 hard-coded colour literals that only worked on the
+   dark theme. In light mode `#93c5fd` (blue-300) and `#fbbf24` (amber-400) sat
+   on pale tints of themselves, so the Balance, Session P/L, VaR/ES tiles and
+   the "open" status badges were washed out and hard to read; hover shadows of
+   `rgba(0,0,0,0.35)` looked like smudges on white. Every accent now derives
+   from a semantic token that is defined PER THEME, so a colour can never be
+   correct in one mode and wrong in the other again.
+
+   Custom properties cascade, so redefining them here overrides the originals
+   above without touching (and risking) the rest of the sheet.
+   ============================================================================ */
+
+:root, [data-theme="dark"] {
+    /* semantic status — text / background / border per state */
+    --info-bg: rgba(59,130,246,0.14);
+    --info-text: #93c5fd;
+    --info-border: rgba(59,130,246,0.28);
+    --warn-bg: rgba(245,158,11,0.14);
+    --warn-text: #fbbf24;
+    --warn-border: rgba(245,158,11,0.30);
+    --danger-bg: rgba(239,68,68,0.14);
+    --danger-text: #f87171;
+    --danger-border: rgba(239,68,68,0.30);
+    --success-bg: rgba(16,185,129,0.14);
+    --success-text: #34d399;
+    --success-border: rgba(16,185,129,0.30);
+
+    --surface-3: #16203a;
+    --border-strong: #2b3a55;
+    --hover-tint: rgba(255,255,255,0.03);
+    --row-hover: rgba(148,178,255,0.05);
+    --glass-sheen: rgba(255,255,255,0.05);
+
+    /* elevation ramp (theme-aware — a black shadow is wrong on light) */
+    --elev-1: 0 1px 2px rgba(0,0,0,0.30);
+    --elev-2: 0 4px 14px rgba(0,0,0,0.28);
+    --elev-3: 0 12px 32px rgba(0,0,0,0.42);
+    --ring: 0 0 0 3px rgba(59,130,246,0.35);
+}
+
+[data-theme="light"] {
+    --info-bg: rgba(37,99,235,0.08);
+    --info-text: #1d4ed8;
+    --info-border: rgba(37,99,235,0.22);
+    --warn-bg: rgba(180,83,9,0.10);
+    /* #b45309 measured 4.38:1 on its own tint — just under WCAG AA (4.5), so
+       amber-800 is used instead; it still reads as amber but passes. */
+    --warn-text: #92400e;
+    --warn-border: rgba(180,83,9,0.26);
+    --danger-bg: rgba(185,28,28,0.08);
+    --danger-text: #b91c1c;
+    --danger-border: rgba(185,28,28,0.22);
+    --success-bg: rgba(4,120,87,0.09);
+    --success-text: #047857;
+    --success-border: rgba(4,120,87,0.22);
+
+    --surface-3: #eaeff6;
+    --border-strong: #d3dae5;
+    --hover-tint: rgba(17,24,39,0.02);
+    --row-hover: rgba(37,99,235,0.045);
+    --glass-sheen: rgba(255,255,255,0.60);
+
+    --elev-1: 0 1px 2px rgba(17,24,39,0.05);
+    --elev-2: 0 4px 14px rgba(17,24,39,0.09);
+    --elev-3: 0 12px 28px rgba(17,24,39,0.14);
+    --ring: 0 0 0 3px rgba(37,99,235,0.25);
+}
+
+/* Shared scale so spacing, radius and motion stop being ad-hoc per rule. */
+:root {
+    --control-h: 34px;
+    --control-h-sm: 28px;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --radius-xs: 6px;
+    --speed: 0.16s;
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --tracking-label: 0.06em;
+}
+
+/* ---------- Typography: numbers must not jitter as they tick ---------- */
+.stat-value, .perf-value, .position-pl, .positions-net, .positions-count,
+.history-profit, .an-metric-value, .an-kv span:last-child, .live-price-value,
+.analysis-kpi b, .tf-scan-rate, .backtest-stats b {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+}
+
+/* 8px/9px labels were below the legible floor; 10px with tighter tracking
+   reads far better at the same visual weight. */
+.stat-label { font-size: 10px; letter-spacing: var(--tracking-label); }
+.stat-label small { font-size: 9px; opacity: 0.75; letter-spacing: 0.02em; }
+.analysis-panel-title, .side-card-header { letter-spacing: 0.04em; }
+
+/* ---------- Remap every hard-coded status colour onto the tokens ---------- */
+.status-offline, .chart-status.demo, .trade-status.warning,
+.history-status.open, .an-insight.warn, .an-insig-mark, .an-v-promising,
+.risk-var, .stat-value.risk {
+    color: var(--warn-text);
+}
+.status-offline, .chart-status.demo, .trade-status.warning, .history-status.open {
+    background: var(--warn-bg);
+    border-color: var(--warn-border);
+}
+.stat-pl, .stat-var {
+    background: var(--warn-bg);
+    color: var(--warn-text);
+    box-shadow: inset 0 0 0 1px var(--warn-border);
+}
+.stat-balance {
+    background: var(--info-bg);
+    color: var(--info-text);
+    box-shadow: inset 0 0 0 1px var(--info-border);
+}
+.stat-winrate { background: var(--success-bg); color: var(--success-text); box-shadow: inset 0 0 0 1px var(--success-border); }
+.stat-open { background: var(--info-bg); color: var(--accent-2); box-shadow: inset 0 0 0 1px var(--info-border); }
+.stat-es { background: var(--danger-bg); color: var(--danger-text); box-shadow: inset 0 0 0 1px var(--danger-border); }
+.stat-value.risk-es, .an-v-negative, .an-v-weak { color: var(--danger-text); }
+.an-v-edge, .an-v-positive { color: var(--success-text); }
+.an-insight.critical { border-left-color: var(--danger-text); }
+.an-insight.warn { border-left-color: var(--warn-text); }
+.an-insight.good { border-left-color: var(--success-text); }
+.an-insight.warn .an-insight-title i { color: var(--warn-text); }
+.an-insight.critical .an-insight-title i { color: var(--danger-text); }
+.an-insight.good .an-insight-title i { color: var(--success-text); }
+.trade-status.info { background: var(--info-bg); color: var(--info-text); }
+.an-v-flat, .an-v-insufficient { color: var(--text-muted); }
+
+/* ---------- Controls: one height, one radius, one focus ring ---------- */
+.symbol-select, .trade-select, .tf-btn, .toolbar-btn, .connect-btn,
+.pos-close, .pos-apply, .trade-field input, .trade-field select,
+.auto-num, .auto-select, .modal-body .form-control {
+    font-family: inherit;
+    font-size: 12.5px;
+    min-height: var(--control-h);
+    border-radius: var(--radius-xs);
+    transition: background var(--speed) var(--ease), border-color var(--speed) var(--ease),
+                color var(--speed) var(--ease), box-shadow var(--speed) var(--ease),
+                transform var(--speed) var(--ease);
+}
+.symbol-select, .trade-select, .auto-select, .trade-field input, .auto-num,
+.modal-body .form-control {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0 10px;
+    outline: none;
+}
+.symbol-select:hover, .trade-select:hover, .auto-select:hover,
+.trade-field input:hover, .auto-num:hover, .modal-body .form-control:hover {
+    border-color: var(--border-strong);
+}
+.symbol-select:focus, .trade-select:focus, .auto-select:focus,
+.trade-field input:focus, .auto-num:focus, .modal-body .form-control:focus {
+    border-color: var(--accent);
+    box-shadow: var(--ring);
+}
+.toolbar-btn:focus-visible, .tf-btn:focus-visible, .btn-buy:focus-visible,
+.btn-sell:focus-visible, .pos-close:focus-visible, .connect-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--ring);
+}
+
+/* Segmented timeframe control reads as one unit rather than 7 loose buttons. */
+.tf-group { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-xs); padding: 3px; gap: 2px; }
+.tf-btn { min-height: calc(var(--control-h) - 8px); border: none; background: transparent; }
+.tf-btn:hover { background: var(--hover-tint); }
+.tf-btn.active { background: var(--accent); color: #fff; box-shadow: var(--elev-1); }
+
+/* ---------- Cards & panels: one elevation ramp, theme-aware hover ---------- */
+.stat-card, .side-card, .history-section, .chart-toolbar, .chart-panel,
+.analysis-panel, .an-metric, .perf-tile {
+    border-radius: var(--radius);
+}
+.stat-card { box-shadow: var(--elev-1); }
+.stat-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent);
+    box-shadow: var(--elev-2);
+}
+.stat-card::after { background: radial-gradient(240px 120px at 0% 0%, var(--info-bg), transparent 62%); }
+.chart-panel, .side-card, .history-section { box-shadow: var(--elev-1); }
+.modal-content { box-shadow: var(--elev-3); border-radius: var(--radius); }
+
+/* Section headers: consistent rhythm and a firmer title weight. */
+.history-header { padding: var(--space-3) var(--space-4); }
+.history-title { font-size: 13px; font-weight: 700; letter-spacing: 0.01em; }
+.side-card-header { padding: var(--space-4) var(--space-4) 0; }
+.side-card-body { padding: var(--space-3) var(--space-4) var(--space-4); }
+
+/* ---------- Tables: right-align the money columns, calm the header ---------- */
+.history-table thead th {
+    background: var(--surface-3);
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    border-bottom: 1px solid var(--border);
+    padding: 9px 14px;
+}
+.history-table tbody tr:hover { background: var(--row-hover); }
+/* Lot Size, SL, TP and Profit/Loss are quantities — they must line up on the
+   decimal, which is most of what makes a data table look professional. */
+.history-table th:nth-child(7), .history-table td:nth-child(7),
+.history-table th:nth-child(8), .history-table td:nth-child(8),
+.history-table th:nth-child(9), .history-table td:nth-child(9),
+.history-table th:nth-child(10), .history-table td:nth-child(10) {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.history-table tbody td { border-bottom: 1px solid var(--border-soft); }
+
+/* Status badges share one shape and now use token colours. */
+.history-status, .positions-count, .positions-net, .auto-mode-badge,
+.tf-scan-verdict, .signal-sub-badge, .decision-badge {
+    border-radius: 999px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+/* ---------- Chips, switches and sliders ---------- */
+.bl-chip { border-radius: 999px; transition: background var(--speed) var(--ease), border-color var(--speed) var(--ease), color var(--speed) var(--ease); }
+.bl-chip:hover { border-color: var(--accent); color: var(--accent); }
+.auto-trade-box { border-radius: var(--radius); }
+.trade-status { border-radius: var(--radius-xs); }
+
+input[type="range"] { accent-color: var(--accent); }
+input[type="checkbox"] { accent-color: var(--accent); }
+
+/* ---------- Scrollbar + selection, themed once ---------- */
+::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--scrollbar-thumb); border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); background-clip: padding-box; }
+::selection { background: var(--info-bg); color: var(--text); }
+
+/* ---------- Respect reduced-motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+    }
+    .stat-card:hover, .toolbar-btn:hover, .theme-toggle:hover { transform: none; }
+}

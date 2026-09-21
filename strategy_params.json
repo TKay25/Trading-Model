@@ -1,6 +1,6 @@
 {
- "generated_at": 1789989112.6429567,
- "records": 75,
+ "generated_at": 1789989596.3754604,
+ "records": 79,
  "groups": {
   "1HZ100V|15m": {
    "n": 1,
@@ -27,9 +27,9 @@
    "ev_pct": null
   },
   "1HZ10V|1m": {
-   "n": 9,
+   "n": 10,
    "multiplier": 400,
-   "avg_atr_pct": 0.0203,
+   "avg_atr_pct": 0.02,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
@@ -183,9 +183,9 @@
    "ev_pct": null
   },
   "R_10|1m": {
-   "n": 10,
+   "n": 11,
    "multiplier": 400,
-   "avg_atr_pct": 0.0182,
+   "avg_atr_pct": 0.0184,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
@@ -222,6 +222,18 @@
    "n": 4,
    "multiplier": 80,
    "avg_atr_pct": 0.096,
+   "current": {
+    "sl_atr_k": 1.5,
+    "tp_atr_k": 6.0
+   },
+   "status": "insufficient_data",
+   "needed": 30,
+   "ev_pct": null
+  },
+  "R_50|5m": {
+   "n": 2,
+   "multiplier": 80,
+   "avg_atr_pct": 0.2127,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
