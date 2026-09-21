@@ -171,92 +171,6 @@
             </div>
         </div>
 
-        <!-- Trade Entry -->
-        <div class="side-card">
-            <div class="side-card-header">
-                <i class="bi bi-controller"></i>
-                <span>Quick Trade</span>
-            </div>
-            <div class="side-card-body">
-                <div class="trade-grid">
-                    <div class="trade-field">
-                        <label>Lot Size ($)</label>
-                        <input type="number" id="tradeLotSize" value="1.00" min="0.35" step="0.01">
-                    </div>
-                    <div class="trade-field">
-                        <label>Multiplier</label>
-                        <select id="tradeMultiplier" class="trade-select">
-                            <option value="50">50×</option>
-                            <option value="100" selected>100×</option>
-                            <option value="200">200×</option>
-                            <option value="300">300×</option>
-                            <option value="500">500×</option>
-                        </select>
-                    </div>
-                    <div class="trade-field">
-                        <label>Stop Loss ($)</label>
-                        <input type="number" id="stopLoss" step="0.01" placeholder="0.00">
-                    </div>
-                    <div class="trade-field">
-                        <label>Take Profit ($)</label>
-                        <input type="number" id="takeProfit" step="0.01" placeholder="0.00">
-                    </div>
-                </div>
-                <p class="sl-tp-hint" id="riskHint">Multiplier day-trade — stays open until SL/TP hits or you close it. P/L moves with the multiplier.</p>
-                <div class="trade-actions">
-                    <span class="trade-toggles">
-                        <label class="switch-label"><input type="checkbox" id="breakEvenToggle" checked> <span>Break-even</span></label>
-                        <label class="switch-label"><input type="checkbox" id="trailToggle" checked> <span>Trail SL</span></label>
-                    </span>
-                    <button class="btn-buy" id="btnBuy">
-                        <i class="bi bi-arrow-up-short"></i> Buy
-                    </button>
-                    <button class="btn-sell" id="btnSell">
-                        <i class="bi bi-arrow-down-short"></i> Sell
-                    </button>
-                </div>
-                <p class="sl-tp-hint" id="slTpTranslate">SL/TP are $ targets — the position stays open until TP/SL hits or you close it.</p>
-                <div class="auto-trade-box">
-                    <div class="auto-trade-row">
-                        <label class="switch-label auto-toggle">
-                            <input type="checkbox" id="autoTradeToggle" checked>
-                            <span class="switch"></span>
-                            <span class="auto-label"><i class="bi bi-robot"></i> Auto-trade</span>
-                        </label>
-                        <label class="auto-min">Min <span id="autoStrengthVal">25</span>%</label>
-                        <label class="switch-label auto-paper"><input type="checkbox" id="autoTradePaper"> <span>Paper</span></label>
-                        <label class="switch-label auto-paper" title="Close a position when TDI + M/W + candlestick signals flip against it"><input type="checkbox" id="autoExitReversal" checked> <span>Exit on rev.</span></label>
-                        <span id="autoModeBadge" class="auto-mode-badge live">LIVE</span>
-                        <button id="restartEngine" class="toolbar-btn" title="Restart the trading engine and re-protect open positions. Use the desktop shortcut to boot the server itself.">
-                            <i class="bi bi-arrow-repeat"></i> Restart Engine
-                        </button>
-                        <input type="range" id="autoTradeStrength" min="0" max="100" value="25" step="5" class="auto-range">
-                    </div>
-                    <div class="auto-trade-row auto-exits">
-                        <label class="auto-min" title="How the stop/target are defined. ATR = scaled to market volatility (a stop inside normal noise gets hit regardless of whether the signal was right). % stake = the old flat mode.">Exit mode
-                            <select id="autoStopMode" class="auto-num auto-select">
-                                <option value="atr">ATR (market)</option>
-                                <option value="stake">% of stake</option>
-                            </select>
-                        </label>
-                        <label class="auto-min stake-only" title="Stake-mode only: stop-loss as a % of the stake">SL <input type="number" id="autoSlPct" class="auto-num" min="0" max="100" step="1" value="20">%</label>
-                        <label class="auto-min stake-only" title="Stake-mode only: take-profit as a % of the stake">TP <input type="number" id="autoTpPct" class="auto-num" min="0" max="2000" step="25" value="500">%</label>
-                        <label class="auto-min atr-only" title="Stop = N x ATR of the signal timeframe">Stop <input type="number" id="autoSlK" class="auto-num" min="0.1" max="20" step="0.1" value="1.5">x ATR</label>
-                        <label class="auto-min atr-only" title="Target = N x ATR of the signal timeframe">Target <input type="number" id="autoTpK" class="auto-num" min="0.5" max="50" step="0.5" value="6">x ATR</label>
-                        <span class="sl-tp-hint" id="autoExitHint">Hard exits on every auto-trade — whichever fires first: SL/TP or the reversal exit.</span>
-                    </div>
-                    <div class="auto-blacklist">
-                        <div class="auto-bl-title"><i class="bi bi-slash-circle"></i> Markets <small id="blMarketsHint">— all trade from the min-strength gate · a blocked (red) chip needs a stronger signal · tap to block / unblock</small></div>
-                        <div id="blMarkets" class="bl-chips"></div>
-                        <div class="auto-bl-title"><i class="bi bi-clock-history"></i> Timeframes <small id="blTimeframesHint">— all trade by default · tap to block / unblock</small></div>
-                        <div id="blTimeframes" class="bl-chips"></div>
-                    </div>
-                    <p class="sl-tp-hint auto-hint" id="autoHint">Auto-trade (runs server-side, page can be closed): all 10 indices × all 7 timeframes · stops sized from ATR so they sit outside normal noise · multiplier auto-capped to keep risk per trade inside your limit · multiple positions per symbol (no hedging).</p>
-                </div>
-                <div id="tradeStatus" class="trade-status d-none"></div>
-            </div>
-        </div>
-
         <!-- Connection Bar -->
         <div class="connect-bar">
             <button class="connect-btn" id="btnConnect">
@@ -268,6 +182,103 @@
             <span id="sidebarAccountBalance" class="status-balance d-none">
                 $<span id="sidebarBalanceValue">0.00</span>
             </span>
+        </div>
+    </div>
+</div>
+
+<!-- Trading & Auto-Trade — MOVED OUT of the 350px sidebar to full width.
+     Why: this card is ~883px tall while the chart + TDI pane reach only ~726px.
+     The grid stretches every column to the tallest one, so the sidebar forced
+     the chart column to ~1666px and left ~940px of dead space below the
+     indicators. Full width fixes the imbalance (chart 726 vs sidebar 741) and
+     finally gives the auto-trade controls the room they were starved of in a
+     316px column. -->
+<div class="history-section trade-section">
+    <div class="history-header">
+        <span class="history-title"><i class="bi bi-controller"></i> Trading &amp; Auto-Trade</span>
+        <span class="sl-tp-hint trade-section-hint">Applied to the server-side engine immediately — the page can be closed.</span>
+    </div>
+    <div class="trade-panel-body">
+        <div class="trade-col trade-col-manual">
+            <div class="trade-grid">
+                <div class="trade-field">
+                    <label>Lot Size ($)</label>
+                    <input type="number" id="tradeLotSize" value="1.00" min="0.35" step="0.01">
+                </div>
+                <div class="trade-field">
+                    <label>Multiplier</label>
+                    <select id="tradeMultiplier" class="trade-select">
+                        <option value="50">50×</option>
+                        <option value="100" selected>100×</option>
+                        <option value="200">200×</option>
+                        <option value="300">300×</option>
+                        <option value="500">500×</option>
+                    </select>
+                </div>
+                <div class="trade-field">
+                    <label>Stop Loss ($)</label>
+                    <input type="number" id="stopLoss" step="0.01" placeholder="0.00">
+                </div>
+                <div class="trade-field">
+                    <label>Take Profit ($)</label>
+                    <input type="number" id="takeProfit" step="0.01" placeholder="0.00">
+                </div>
+            </div>
+            <p class="sl-tp-hint" id="riskHint">Multiplier day-trade — stays open until SL/TP hits or you close it. P/L moves with the multiplier.</p>
+            <div class="trade-actions">
+                <span class="trade-toggles">
+                    <label class="switch-label"><input type="checkbox" id="breakEvenToggle" checked> <span>Break-even</span></label>
+                    <label class="switch-label"><input type="checkbox" id="trailToggle" checked> <span>Trail SL</span></label>
+                </span>
+                <button class="btn-buy" id="btnBuy">
+                    <i class="bi bi-arrow-up-short"></i> Buy
+                </button>
+                <button class="btn-sell" id="btnSell">
+                    <i class="bi bi-arrow-down-short"></i> Sell
+                </button>
+            </div>
+            <p class="sl-tp-hint" id="slTpTranslate">SL/TP are $ targets — the position stays open until TP/SL hits or you close it.</p>
+            <div id="tradeStatus" class="trade-status d-none"></div>
+        </div>
+
+        <div class="trade-col trade-col-auto">
+            <div class="auto-trade-box">
+                <div class="auto-trade-row">
+                    <label class="switch-label auto-toggle">
+                        <input type="checkbox" id="autoTradeToggle" checked>
+                        <span class="switch"></span>
+                        <span class="auto-label"><i class="bi bi-robot"></i> Auto-trade</span>
+                    </label>
+                    <label class="auto-min">Min <span id="autoStrengthVal">25</span>%</label>
+                    <label class="switch-label auto-paper"><input type="checkbox" id="autoTradePaper"> <span>Paper</span></label>
+                    <label class="switch-label auto-paper" title="Close a position when TDI + M/W + candlestick signals flip against it"><input type="checkbox" id="autoExitReversal" checked> <span>Exit on rev.</span></label>
+                    <span id="autoModeBadge" class="auto-mode-badge live">LIVE</span>
+                    <button id="restartEngine" class="toolbar-btn" title="Restart the trading engine and re-protect open positions. Use the desktop shortcut to boot the server itself.">
+                        <i class="bi bi-arrow-repeat"></i> Restart Engine
+                    </button>
+                    <input type="range" id="autoTradeStrength" min="0" max="100" value="25" step="5" class="auto-range">
+                </div>
+                <div class="auto-trade-row auto-exits">
+                    <label class="auto-min" title="How the stop/target are defined. ATR = scaled to market volatility (a stop inside normal noise gets hit regardless of whether the signal was right). % stake = the old flat mode.">Exit mode
+                        <select id="autoStopMode" class="auto-num auto-select">
+                            <option value="atr">ATR (market)</option>
+                            <option value="stake">% of stake</option>
+                        </select>
+                    </label>
+                    <label class="auto-min stake-only" title="Stake-mode only: stop-loss as a % of the stake">SL <input type="number" id="autoSlPct" class="auto-num" min="0" max="100" step="1" value="20">%</label>
+                    <label class="auto-min stake-only" title="Stake-mode only: take-profit as a % of the stake">TP <input type="number" id="autoTpPct" class="auto-num" min="0" max="2000" step="25" value="500">%</label>
+                    <label class="auto-min atr-only" title="Stop = N x ATR of the signal timeframe">Stop <input type="number" id="autoSlK" class="auto-num" min="0.1" max="20" step="0.1" value="1.5">x ATR</label>
+                    <label class="auto-min atr-only" title="Target = N x ATR of the signal timeframe">Target <input type="number" id="autoTpK" class="auto-num" min="0.5" max="50" step="0.5" value="6">x ATR</label>
+                    <span class="sl-tp-hint" id="autoExitHint">Hard exits on every auto-trade — whichever fires first: SL/TP or the reversal exit.</span>
+                </div>
+                <div class="auto-blacklist">
+                    <div class="auto-bl-title"><i class="bi bi-slash-circle"></i> Markets <small id="blMarketsHint">— all trade from the min-strength gate · a blocked (red) chip needs a stronger signal · tap to block / unblock</small></div>
+                    <div id="blMarkets" class="bl-chips"></div>
+                    <div class="auto-bl-title"><i class="bi bi-clock-history"></i> Timeframes <small id="blTimeframesHint">— all trade by default · tap to block / unblock</small></div>
+                    <div id="blTimeframes" class="bl-chips"></div>
+                </div>
+                <p class="sl-tp-hint auto-hint" id="autoHint">Auto-trade (runs server-side, page can be closed): all 10 indices × all 7 timeframes · stops sized from ATR so they sit outside normal noise · multiplier auto-capped to keep risk per trade inside your limit · multiple positions per symbol (no hedging).</p>
+            </div>
         </div>
     </div>
 </div>
@@ -324,7 +335,7 @@
                 <i class="bi bi-x-circle"></i> Close All
             </button>
             <button id="refreshPositions" class="toolbar-btn" title="Refresh positions">
-                <i class="bi bi-arrow-clockwise"></i>
+                <i class="bi bi-arrow-clockwise"></i> Refresh
             </button>
         </div>
     </div>
@@ -383,41 +394,99 @@
                     <span class="analysis-kpi">Win rate: <b id="anWinRate">--</b></span>
                     <span class="analysis-kpi">Net P/L: <b id="anNet">--</b></span>
                 </div>
+
+                <!-- Risk-adjusted metrics. Win rate alone is close to useless on a
+                     fat-tail exit: the money is made by a few large winners. -->
+                <div class="an-metrics" id="anMetrics"></div>
+
+                <!-- Expert Findings: generated from the numbers, each quoting its
+                     own sample size so a finding can always be checked. -->
+                <div class="analysis-panel an-panel-wide">
+                    <div class="analysis-panel-title">
+                        <i class="bi bi-lightbulb"></i> Expert Findings
+                        <small>auto-generated from your trades · every finding quotes its sample</small>
+                    </div>
+                    <div id="anInsights" class="an-insights"></div>
+                </div>
+
                 <div class="analysis-grid">
                     <div class="analysis-panel">
-                        <div class="analysis-panel-title">Best Setups <small>(symbol × timeframe × signal)</small></div>
-                        <table class="history-table analysis-table">
-                            <thead><tr><th>Instrument</th><th>Timeframe</th><th>Signal</th><th>Wins</th><th>Losses</th><th>Win Rate</th><th>Net P/L</th></tr></thead>
-                            <tbody id="anBestSetups"></tbody>
-                        </table>
+                        <div class="analysis-panel-title">Best Setups <small>(symbol × timeframe × signal, ranked by expectancy)</small></div>
+                        <div class="an-table-wrap">
+                            <table class="history-table analysis-table">
+                                <thead><tr><th>Instrument</th><th>TF</th><th>Signal</th><th>N</th><th>Win Rate</th><th>95% CI</th><th>Exp/trade</th><th>Exp R</th><th>PF</th><th>Net P/L</th><th>Verdict</th></tr></thead>
+                                <tbody id="anBestSetups"></tbody>
+                            </table>
+                        </div>
                     </div>
                     <div class="analysis-panel">
-                        <div class="analysis-panel-title">By Instrument</div>
-                        <table class="history-table analysis-table">
-                            <thead><tr><th>Instrument</th><th>Wins</th><th>Losses</th><th>Win Rate</th><th>Net P/L</th></tr></thead>
-                            <tbody id="anByInstrument"></tbody>
-                        </table>
+                        <div class="analysis-panel-title">Execution Quality <small>(how well you got out, from path data)</small></div>
+                        <div id="anPaths" class="an-kv-list"></div>
                     </div>
                     <div class="analysis-panel">
-                        <div class="analysis-panel-title">By Signal Strength</div>
-                        <table class="history-table analysis-table">
-                            <thead><tr><th>Signal Range</th><th>Wins</th><th>Losses</th><th>Win Rate</th><th>Net P/L</th></tr></thead>
-                            <tbody id="anBySignal"></tbody>
-                        </table>
+                        <div class="analysis-panel-title">Exit Attribution <small>(what actually ended each trade)</small></div>
+                        <div class="an-table-wrap">
+                            <table class="history-table analysis-table">
+                                <thead><tr><th>Ended by</th><th>Trades</th><th>Avg % of stake</th><th>Net P/L</th></tr></thead>
+                                <tbody id="anExits"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="analysis-panel">
+                        <div class="analysis-panel-title">By Instrument <small>(ranked by expectancy)</small></div>
+                        <div class="an-table-wrap">
+                            <table class="history-table analysis-table">
+                                <thead><tr><th>Instrument</th><th>N</th><th>Win Rate</th><th>95% CI</th><th>Exp/trade</th><th>Exp R</th><th>PF</th><th>Net P/L</th><th>Verdict</th></tr></thead>
+                                <tbody id="anByInstrument"></tbody>
+                            </table>
+                        </div>
                     </div>
                     <div class="analysis-panel">
                         <div class="analysis-panel-title">By Timeframe</div>
-                        <table class="history-table analysis-table">
-                            <thead><tr><th>Timeframe</th><th>Wins</th><th>Losses</th><th>Win Rate</th><th>Net P/L</th></tr></thead>
-                            <tbody id="anByTimeframe"></tbody>
-                        </table>
+                        <div class="an-table-wrap">
+                            <table class="history-table analysis-table">
+                                <thead><tr><th>Timeframe</th><th>N</th><th>Win Rate</th><th>95% CI</th><th>Exp/trade</th><th>Exp R</th><th>PF</th><th>Net P/L</th><th>Verdict</th></tr></thead>
+                                <tbody id="anByTimeframe"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="analysis-panel">
+                        <div class="analysis-panel-title">By Signal Strength</div>
+                        <div class="an-table-wrap">
+                            <table class="history-table analysis-table">
+                                <thead><tr><th>Signal Range</th><th>N</th><th>Win Rate</th><th>95% CI</th><th>Exp/trade</th><th>Exp R</th><th>PF</th><th>Net P/L</th><th>Verdict</th></tr></thead>
+                                <tbody id="anBySignal"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="analysis-panel">
+                        <div class="analysis-panel-title">By Direction</div>
+                        <div class="an-table-wrap">
+                            <table class="history-table analysis-table">
+                                <thead><tr><th>Direction</th><th>N</th><th>Win Rate</th><th>95% CI</th><th>Exp/trade</th><th>Exp R</th><th>PF</th><th>Net P/L</th><th>Verdict</th></tr></thead>
+                                <tbody id="anByDirection"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="analysis-panel">
+                        <div class="analysis-panel-title">By Hour <small>(close time, local)</small></div>
+                        <div class="an-table-wrap">
+                            <table class="history-table analysis-table">
+                                <thead><tr><th>Hour</th><th>N</th><th>Win Rate</th><th>95% CI</th><th>Exp/trade</th><th>Exp R</th><th>PF</th><th>Net P/L</th><th>Verdict</th></tr></thead>
+                                <tbody id="anByHour"></tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
                 <p class="sl-tp-hint mt-2 mb-0">
                     <i class="bi bi-info-circle"></i>
-                    Shows settled trades with full metadata (opened through this app). Timeframe &amp; Signal
-                    Strength are recorded for auto-trades. With min strength at <b>0%</b>, trades open at every
-                    strength so each signal range builds up samples — then raise min strength to the winning range.
+                    <b>Verdict</b> is sample-gated: a bucket needs <b>30+</b> settled trades before it can be
+                    called an edge or negative, and 10–29 is only "promising"/"weak". <b>95% CI</b> is the Wilson
+                    interval for the win rate — if it straddles 50% the rate is not distinguishable from chance
+                    (marked <span class="an-insig-mark">~</span>). Tables are ranked by <b>expectancy</b>, not win
+                    rate, because on a fat-tail exit a high win rate can still lose money.
+                    Execution Quality needs path data, which only exists for positions the monitor actively
+                    tracked — profit/loss numbers above come from the results ledger and are unaffected.
                 </p>
             </div>
         </div>

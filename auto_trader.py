@@ -192,6 +192,28 @@ class AutoTrader:
             "risk_by_tf": {"1m": 0.20, "5m": 0.30, "15m": 0.55, "30m": 0.80},
             "stop_loss_pct": 0.20,       # stake-mode only (see stop_mode)
             "take_profit_pct": 5.0,      # stake-mode only
+            # BREAK-EVEN + TRAILING STOP FOR AUTO-TRADES (user rule 2026-09-21).
+            # The monitor has always supported these; auto-trades simply never
+            # enabled them, so a position that ran into good profit could still
+            # round-trip all the way back to its original stop. Now the stop
+            # RATCHETS UP as the trade works:
+            #   break_even_enabled: once profit >= break_even_pct x TP, the stop
+            #                       moves to 0 (the worst case becomes no loss).
+            #   trail_enabled:      the stop then follows the best profit reached,
+            #                       never more than trail_pct x TP behind it, so a
+            #                       close can lock in a PROFIT, never a loss.
+            # Both are fractions of TP, and TP = tp_atr_k x ATR, so with the
+            # defaults below the stop arms at +1.5xATR and trails 1.5xATR behind
+            # the best profit — deliberately symmetric with the entry stop.
+            # The stop NEVER moves down and never below the original stop-loss.
+            # TRADE-OFF: this caps the fat-tail winners the ATR exit depends on
+            # (exit_study: atr 1.5/6 has mean +8.66% but MEDIAN -11.67%), so it is
+            # worth measuring rather than assuming it helps. Set either to false to
+            # restore the previous fixed-stop behaviour.
+            "break_even_enabled": True,
+            "break_even_pct": 0.25,      # arm at 25% of TP = 1.5xATR of profit
+            "trail_enabled": True,
+            "trail_pct": 0.25,           # trail 25% of TP = 1.5xATR behind best profit
             # BLACKLIST NO LONGER USED (2026-09-20, user decision): the bot now
             # trades ALL indices x ALL timeframes. The old 8-symbol blocklist
             # was fitted to per-symbol net P/L that turned out to have only 6/10
@@ -254,6 +276,8 @@ class AutoTrader:
                       "strict_flip",
                       "stop_mode", "sl_atr_k", "tp_atr_k", "min_stop_move_pct",
                       "max_risk_pct", "risk_by_tf", "stop_loss_pct", "take_profit_pct",
+                      "break_even_enabled", "break_even_pct",
+                      "trail_enabled", "trail_pct",
                       "adopt_mode"):
                 if k in kw:
                     self._cfg[k] = kw[k]
@@ -987,7 +1011,14 @@ class AutoTrader:
             cid = result["buy"]["contract_id"]
             # ALWAYS track: the monitor enforces SL/TP AND records the trade's
             # P/L path (MAE/MFE) that the learning layer is fitted on.
-            self._pm.track(cid, symbol, sl, tp, meta={
+            # break_even/trail make the stop RATCHET UP as profit grows, so a
+            # winner can no longer round-trip back to its original stop.
+            self._pm.track(cid, symbol, sl, tp,
+                break_even=bool(cfg.get("break_even_enabled")),
+                trail=bool(cfg.get("trail_enabled")),
+                break_even_pct=float(cfg.get("break_even_pct") or 0.5),
+                trail_pct=float(cfg.get("trail_pct") or 0.5),
+                meta={
                 "stake": stake,
                 "multiplier": multiplier,
                 "direction": direction,

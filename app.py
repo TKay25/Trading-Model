@@ -275,9 +275,24 @@ def _reconcile_open_results(open_ids):
 
     async def _check(api):
         sem = asyncio.Semaphore(6)
+        # Reuse the monitor's cached live state first. It already polls every
+        # open contract; duplicating that here is part of what exhausted Deriv's
+        # proposal_open_contract rate limit and blinded the SL/TP enforcement.
+        try:
+            from position_monitor import live_snapshot
+            snap = live_snapshot()
+        except Exception:
+            snap = {}
+        settled_states = ("sold", "won", "lost", "expired", "closed")
 
         async def _one(cid):
             async with sem:
+                try:
+                    live = snap.get(int(cid))
+                except (TypeError, ValueError):
+                    live = None
+                if live and live.get("status") in settled_states:
+                    return cid, live.get("status"), {"profit": live.get("profit")}
                 try:
                     resp = await api._send_request(
                         {"proposal_open_contract": 1, "contract_id": int(cid)})
@@ -1298,11 +1313,28 @@ def get_paths():
     cutting losers or cutting winners.
     """
     try:
-        from position_monitor import path_summary, trade_paths
+        from position_monitor import path_summary, trade_paths, live_health
         return jsonify({"success": True, **path_summary(),
+                        "live_health": live_health(),
                         "records": len(trade_paths)})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+# --- Empty-portfolio re-auth storm guard -------------------------------------
+# Deriv answers an OVER-QUOTA authenticated request with an EMPTY payload rather
+# than an error, which is indistinguishable from "you have no positions". So the
+# degraded-retry in /api/positions fired on EVERY poll, and each retry ran the
+# full OTP flow (REST accounts -> POST /otp -> new WS) = a NEW authenticated
+# session every few seconds. Log evidence 2026-09-21: two complete re-auths
+# inside 12 seconds (10:23:53 and 10:24:00) driven by an 8s dashboard poll.
+# That session churn is what exhausted the account-wide rate limit for
+# proposal_open_contract AND proposal, and losing proposal_open_contract is what
+# silently disabled SL/TP enforcement. So: at most ONE re-auth per cooldown, and
+# serve the last known good portfolio in between.
+_REAUTH_COOLDOWN = 60.0
+_last_reauth = 0.0
+_POS_CACHE = {"ts": 0.0, "contracts": []}
 
 
 @app.route("/api/positions")
@@ -1311,9 +1343,13 @@ def get_positions():
     with LIVE unrealized P/L.
 
     The new-API portfolio response does NOT include a current-profit field, so
-    each open contract's live P/L is fetched via `proposal_open_contract` (the
-    same call the SL/TP auto-close monitor uses successfully).
+    the live P/L is read from the position monitor's cache (it is the only
+    component allowed to call proposal_open_contract -- see position_monitor).
     """
+    # _last_reauth is REBOUND below, so it must be declared global; without this
+    # the read on the cooldown check raises UnboundLocalError and the endpoint
+    # 500s on every poll (verified the hard way).
+    global _last_reauth
     if not Config.DERIV_API_TOKEN:
         return jsonify({"success": False, "error": "No API token configured"}), 400
 
@@ -1321,26 +1357,33 @@ def get_positions():
         port = await api.get_portfolio()
         pt = port.get("portfolio", {}) if isinstance(port, dict) else {}
         contracts = pt.get("contracts", []) if isinstance(pt, dict) else []
-        # Fetch each open contract's live P/L CONCURRENTLY (bounded by a
-        # semaphore). Sequential per-contract calls took ~50s with many open
-        # positions — that lag made page refreshes feel broken on Render.
-        sem = asyncio.Semaphore(10)
-
-        async def _pl(c):
-            async with sem:
-                cid = c.get("contract_id")
-                if not cid:
-                    return
-                try:
-                    poc = await api._send_request({"proposal_open_contract": 1, "contract_id": int(cid)})
-                    poc_data = (poc or {}).get("proposal_open_contract") or {}
-                    if isinstance(poc_data, dict):
-                        c["_profit"] = _num(poc_data.get("profit"))
-                        c["_sellable"] = poc_data.get("is_valid_to_sell")
-                except Exception:
-                    pass
-
-        await asyncio.gather(*(_pl(c) for c in contracts), return_exceptions=True)
+        # Live P/L comes from the POSITION MONITOR's cache, NOT from our own
+        # proposal_open_contract calls. This endpoint used to fire one call per
+        # open contract (semaphore 10, concurrent) on EVERY UI poll -- which,
+        # together with the monitor, the results reconciler and the AutoTrader
+        # adoption sweep, blew through Deriv's ACCOUNT-WIDE rate limit for that
+        # call. The consequence was NOT a slow dashboard: the monitor could read
+        # no profit for any contract, so it stopped enforcing SL/TP entirely and
+        # reconnected in a 10-second loop (measured 2026-09-21: 19 open
+        # positions, 0% protection). One poller, one shared quota.
+        try:
+            from position_monitor import live_snapshot
+            snap = live_snapshot()
+        except Exception as e:
+            logger.warning("Live P/L snapshot unavailable: %r", e)
+            snap = {}
+        for c in contracts:
+            cid = c.get("contract_id")
+            try:
+                live = snap.get(int(cid))
+            except (TypeError, ValueError):
+                live = None
+            if live:
+                c["_live"] = live
+                c["_profit"] = live.get("profit")
+                # We only hold live data for a contract that is still open, so
+                # it is sellable.
+                c["_sellable"] = 1
         return contracts
 
     try:
@@ -1358,20 +1401,38 @@ def get_positions():
         except Exception:
             tracked = 0
         if not contracts and tracked:
-            logger.warning("Portfolio came back EMPTY while %d position(s) are tracked "
-                           "— forcing re-authentication and retrying", tracked)
-            try:
-                _get_shared_conn().invalidate()
-            except Exception as e:
-                logger.warning("Could not invalidate the shared connection: %r", e)
-            try:
-                contracts = _deriv_call(_portfolio, authenticated=True)
-            except Exception as e:
-                logger.warning("Portfolio retry after re-auth failed: %r", e)
-            degraded = not contracts
-            if not degraded:
-                logger.info("Portfolio retry after re-auth succeeded (%d contract(s))",
-                            len(contracts))
+            now = time.time()
+            if (now - _last_reauth) < _REAUTH_COOLDOWN:
+                # RE-AUTH STORM GUARD (see _REAUTH_COOLDOWN above). Re-authing
+                # here again would just create another session against an
+                # already-throttled account and dig the hole deeper. Serve the
+                # last good portfolio so the dashboard keeps showing the real
+                # book while the quota recovers.
+                contracts = list(_POS_CACHE.get("contracts") or [])
+                degraded = True
+                logger.warning("Portfolio EMPTY with %d tracked; re-auth SUPPRESSED "
+                               "(%.0fs since last attempt) - serving %d cached "
+                               "contract(s)", tracked, now - _last_reauth,
+                               len(contracts))
+            else:
+                _last_reauth = now
+                logger.warning("Portfolio came back EMPTY while %d position(s) are tracked "
+                               "- forcing re-authentication and retrying", tracked)
+                try:
+                    _get_shared_conn().invalidate()
+                except Exception as e:
+                    logger.warning("Could not invalidate the shared connection: %r", e)
+                try:
+                    contracts = _deriv_call(_portfolio, authenticated=True)
+                except Exception as e:
+                    logger.warning("Portfolio retry after re-auth failed: %r", e)
+                degraded = not contracts
+                if not degraded:
+                    logger.info("Portfolio retry after re-auth succeeded (%d contract(s))",
+                                len(contracts))
+        if contracts:
+            _POS_CACHE["ts"] = time.time()
+            _POS_CACHE["contracts"] = list(contracts)
         cutoff = session.get("history_cutoff") or 0
         positions = []
         for c in contracts:
@@ -1382,6 +1443,7 @@ def get_positions():
                 payout = float(c.get("payout", 0))
                 cid = c.get("contract_id")
                 info = trade_ledger.get(cid, {})
+                live = c.get("_live") or {}
                 positions.append({
                     "contract_id": cid,
                     "contract_type": c.get("contract_type") or info.get("contract_type"),
@@ -1390,6 +1452,13 @@ def get_positions():
                     "lot_size": info.get("lot_size", buy_price),
                     "stop_loss": info.get("stop_loss", 0),
                     "take_profit": info.get("take_profit", 0),
+                    # EFFECTIVE stop from the monitor: break-even and trailing
+                    # move this upward as a trade profits, so this -- not the
+                    # original stop_loss -- is the level actually protecting the
+                    # position. None means the monitor holds no live data yet.
+                    "stop_current": live.get("stop"),
+                    "live_age": (round(time.time() - live["ts"], 1)
+                                 if live.get("ts") else None),
                     "payout": payout,
                     "profit": c.get("_profit"),
                     "is_valid_to_sell": c.get("_sellable", c.get("is_valid_to_sell")),
@@ -1660,46 +1729,604 @@ def _group_stats(groups):
     return out
 
 
+# ---------------------------------------------------------------------------
+# WINNING ANALYSIS — expert-grade trade analytics
+#
+# The previous version reported win rate + net P/L per bucket. That is not
+# enough to act on, and on THIS dataset it is actively misleading in two ways we
+# have already measured:
+#
+#   1. A HIGH WIN RATE CAN LOSE MONEY. The exit geometry is fat-tailed
+#      (atr 1.5/6: mean +8.66% of stake but MEDIAN -11.67%, win rate 36.6%), so
+#      the money comes from a few large winners. Ranking buckets by win rate
+#      puts them in close to the OPPOSITE order to expectancy.
+#   2. SMALL SAMPLES LOOK LIKE EDGE. Across 10 symbols x 7 timeframes x 5
+#      strength buckets, something is guaranteed to look brilliant by luck --
+#      an 8-symbol blocklist built exactly that way in this project turned out
+#      to be noise-fitting. Every rate below therefore also carries a Wilson 95%
+#      interval and an explicit verdict that REFUSES to call an edge the sample
+#      cannot support.
+#
+# Everything is computed from the app's own outcome ledger (immune to Deriv's
+# non-deterministic profit_table paging) joined with the position monitor's
+# MAE/MFE path records for the execution-quality and "what actually ended the
+# trade" analysis. Every number is data-gated; nothing raises.
+# ---------------------------------------------------------------------------
+
+MIN_N_EDGE = 30      # settled trades before a verdict may be called "real"
+MIN_N_HINT = 10      # enough to comment on, not enough to act on
+MIN_N_PRUNE = 30     # sample required before recommending a market be dropped
+
+
+def _wilson_interval(wins, n, z=1.96):
+    """95% Wilson score interval (lo, hi) for a win rate. Returns (None, None)
+    without data. Used so a 3-of-3 bucket cannot outrank a 60-of-100 one."""
+    if not n:
+        return None, None
+    p = wins / n
+    d = 1 + z * z / n
+    centre = p + z * z / (2 * n)
+    margin = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5)
+    return max(0.0, (centre - margin) / d), min(1.0, (centre + margin) / d)
+
+
+def _wilson_lower(wins, n, z=1.96):
+    """Lower bound of the 95% Wilson score interval for a win rate (0..1)."""
+    return _wilson_interval(wins, n, z)[0]
+
+
+def _verdict(n, net):
+    """Sample-size-aware verdict. n gates the language, not the arithmetic."""
+    if n < MIN_N_HINT:
+        return "insufficient"
+    if n < MIN_N_EDGE:
+        return "promising" if net > 0 else "weak"
+    if net > 0:
+        return "edge"
+    if net < 0:
+        return "negative"
+    return "flat"
+
+
+def _direction_of(contract_type):
+    ct = (contract_type or "").upper()
+    if ct in ("MULTUP", "CALL", "BUY"):
+        return "BUY"
+    if ct in ("MULTDOWN", "PUT", "SELL"):
+        return "SELL"
+    return None
+
+
+def _path_records():
+    """contract_id -> path record, from the monitor's in-memory dataset.
+
+    `trade_paths` keys are ints in memory (load_trade_paths normalises them); we
+    normalise again defensively because a stale/string-keyed dict must not be
+    able to silently produce an empty join.
+    """
+    try:
+        from position_monitor import trade_paths
+        out = {}
+        for k, v in list(trade_paths.items()):
+            try:
+                out[int(k)] = v
+            except (TypeError, ValueError):
+                continue
+        return out
+    except Exception:
+        return {}
+
+
+def _stats_block(items):
+    """Full statistics for one bucket of settled trades.
+
+    Returns win rate WITH its confidence interval, expectancy in $ and in R,
+    profit factor and payoff ratio — the numbers an expert actually reads.
+    """
+    n = len(items)
+    profits = []
+    for r in items:
+        try:
+            profits.append(float(r.get("profit") or 0))
+        except (TypeError, ValueError):
+            profits.append(0.0)
+    wins = [p for p in profits if p >= 0]
+    losses = [p for p in profits if p < 0]
+    gross_win = sum(wins)
+    gross_loss = abs(sum(losses))
+    net = gross_win - gross_loss
+    win_rate = (100.0 * len(wins) / n) if n else 0.0
+    lo, hi = _wilson_interval(len(wins), n)
+    # Only a rate whose whole 95% interval sits off 50% is distinguishable from
+    # a coin flip. Everything else is noise dressed up as a percentage.
+    significant = bool(lo is not None and (lo > 0.5 or hi < 0.5))
+
+    # R-multiple expectancy: profit relative to the $ the trade actually risked.
+    rs = []
+    for r in items:
+        try:
+            sl = abs(float(r.get("stop_loss") or 0))
+            pf = float(r.get("profit") or 0)
+        except (TypeError, ValueError):
+            continue
+        if sl > 0:
+            rs.append(pf / sl)
+    exp_r = round(sum(rs) / len(rs), 3) if rs else None
+
+    return {
+        "total": n,
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate": round(win_rate, 1),
+        "win_rate_ci_low": round(100.0 * lo, 1) if lo is not None else None,
+        "win_rate_ci_high": round(100.0 * hi, 1) if hi is not None else None,
+        "significant": significant,
+        "net_profit": round(net, 2),
+        "gross_win": round(gross_win, 2),
+        "gross_loss": round(gross_loss, 2),
+        # NEVER return float('inf'): Flask serialises it as the bare token
+        # `Infinity`, which is NOT valid JSON and makes JSON.parse throw in the
+        # browser. Signal "no losing trades yet" with None and let the UI render
+        # it from gross_loss/gross_win.
+        "profit_factor": (round(gross_win / gross_loss, 2) if gross_loss > 0
+                          else None),
+        "expectancy": round(net / n, 3) if n else 0.0,
+        "expectancy_r": exp_r,
+        "avg_win": round(gross_win / len(wins), 3) if wins else 0.0,
+        "avg_loss": round(-gross_loss / len(losses), 3) if losses else 0.0,
+        "payoff_ratio": (round((gross_win / len(wins)) / (gross_loss / len(losses)), 2)
+                         if wins and losses else None),
+        "verdict": _verdict(n, net),
+    }
+
+
+def _max_drawdown(profits_in_order):
+    """Peak-to-trough of the cumulative P/L curve, in $."""
+    peak = 0.0
+    cum = 0.0
+    worst = 0.0
+    for p in profits_in_order:
+        cum += p
+        peak = max(peak, cum)
+        worst = min(worst, cum - peak)
+    return round(worst, 2)
+
+
+def _streaks(profits_in_order):
+    best_w = best_l = cur_w = cur_l = 0
+    for p in profits_in_order:
+        if p >= 0:
+            cur_w += 1
+            cur_l = 0
+            best_w = max(best_w, cur_w)
+        else:
+            cur_l += 1
+            cur_w = 0
+            best_l = max(best_l, cur_l)
+    return best_w, best_l
+
+
+def _build_insights(core, dims, exits, paths, artefacts):
+    """Turn the numbers into prioritised, plain-English findings.
+
+    This is the part that makes the view expert rather than descriptive: each
+    finding is only emitted when the data can actually carry it, and it always
+    quotes the sample and the effect size so it can be checked.
+    """
+    ins = []
+
+    def add(sev, title, detail):
+        ins.append({"severity": sev, "title": title, "detail": detail})
+
+    n = core["settled"]
+    net = core["net_profit"]
+    pf = core["profit_factor"]
+
+    if n < MIN_N_HINT:
+        add("info", "Not enough settled trades yet",
+            f"Only {n} settled trade(s) with full metadata. Nothing below is "
+            f"statistically meaningful until roughly {MIN_N_HINT}+; treat it as "
+            f"a wiring check, not a verdict.")
+        return ins
+
+    # ---- the headline: is there an edge at all? -------------------------
+    exp = core["expectancy"]
+    pf_txt = pf if pf is not None else "n/a"
+    if net < 0:
+        # The number that actually matters here is the BREAK-EVEN PAYOFF RATIO:
+        # with a p% hit rate you need avg win / avg loss >= (1-p)/p just to stand
+        # still. Comparing the two tells the user exactly how far off they are,
+        # which "win rate" and "net P/L" alone never do.
+        p = (core["win_rate"] or 0) / 100.0
+        need = ((1 - p) / p) if p > 0 else None
+        have = core.get("payoff_ratio")
+        detail = (f"Net {net:+.2f} across {n} settled trades = {exp:+.3f}/trade "
+                  f"(profit factor {pf_txt}, avg win {core['avg_win']:.3f}, "
+                  f"avg loss {core['avg_loss']:.3f}). ")
+        if need and have:
+            detail += (f"At a {core['win_rate']}% hit rate the average win must be "
+                       f"{need:.2f}x the average loss just to break even; yours is "
+                       f"{have:.2f}x. Either close that gap (let winners run further / "
+                       f"cut losses sooner) or raise the hit rate.")
+        else:
+            detail += (f"Winning {core['win_rate']}% does not pay for the losses. "
+                       f"Expectancy is negative, so more trades make it worse, not "
+                       f"better.")
+        add("critical", "The strategy is losing money", detail)
+    else:
+        add("good", "Positive expectancy overall",
+            f"Net {net:+.2f} across {n} trades = {exp:+.3f}/trade, profit factor "
+            f"{pf_txt}, win rate {core['win_rate']}% "
+            f"(95% CI low {core['win_rate_ci_low']}%).")
+
+    # ---- tail dependence: the fragility of a fat-tail edge --------------
+    if core.get("top5_share") is not None and core["top5_share"] > 0.5:
+        add("warn", "The profit depends on a handful of trades",
+            f"The best 5% of trades produce {core['top5_share'] * 100:.0f}% of all "
+            f"gross profit. That is normal for a fat-tail exit, but it means the "
+            f"result is fragile: any rule that clips big winners (trailing stops, "
+            f"a close-all target, a tighter take-profit) removes the very trades "
+            f"that pay for everything else.")
+
+    # ---- where the losses actually come from ----------------------------
+    if core.get("full_loss_pct") is not None and core["full_loss_pct"] > 20:
+        add("critical", "Trades are dying by -100% full-stake close, not by your stop",
+            f"{core['full_loss_pct']:.0f}% of settled trades lost >=95% of stake. "
+            f"That is Deriv's own -100% multiplier close, which fires only when no "
+            f"stop of ours was enforced (untracked position, monitor not running, "
+            f"or a stop that was never armed). Open the 'Closed By' column: a stop "
+            f"that is set will show as Stop-loss instead.")
+
+    # ---- restart artefacts must not be read as strategy outcomes --------
+    if artefacts.get("count"):
+        add("info", "Restart artefacts excluded",
+            f"{artefacts['count']} stop-out(s) were ADOPTION artefacts — positions "
+            f"adopted at boot and stopped within {artefacts['window_s']:.0f}s "
+            f"(median hold {artefacts['median_hold_s']:.0f}s). They are counted "
+            f"separately in Exit Attribution and must not be read as strategy "
+            f"performance: they are a restart cost, not a signal outcome.")
+
+    # ---- execution quality from the MAE/MFE path data -------------------
+    cov = paths.get("coverage")
+    if paths.get("n"):
+        if paths.get("capture") is not None and paths["capture"] < 0.5:
+            add("warn", "You are giving back most of your peak profit",
+                f"Winners peak at an average of {paths['avg_mfe_pct'] * 100:+.1f}% of "
+                f"stake but close at {paths['avg_final_win_pct'] * 100:+.1f}% — a "
+                f"capture ratio of {paths['capture'] * 100:.0f}%. Tightening the "
+                f"trailing stop or pulling the take-profit in would convert more of "
+                f"that peak into realised money (but see the tail-dependence finding "
+                f"above first — they pull in opposite directions).")
+        if paths.get("winner_mae_pct") is not None:
+            add("info", "How much room your winners needed",
+                f"Winners dipped to an average of {paths['winner_mae_pct'] * 100:+.1f}% "
+                f"of stake before recovering. Any stop tighter than that (with margin "
+                f"for the ~2s execution lag) would have killed them.")
+        if paths.get("dipped_then_recovered"):
+            add("warn", "Tight stops would be expensive",
+                f"{paths['dipped_then_recovered']} trade(s) went below -15% of stake "
+                f"and still closed green. That is the direct measure of what a tighter "
+                f"stop costs you.")
+        if paths.get("overshoot_pct") is not None and paths["overshoot_pct"] > 5:
+            add("warn", "Your stops execute late",
+                f"Stop-outs land {paths['overshoot_pct']:.1f}% of stake BEYOND the "
+                f"configured stop on average. That is monitoring lag (the position is "
+                f"polled, not held as a broker order), not slippage. A stop placed on "
+                f"the contract at purchase would remove this entirely.")
+        if cov is not None and cov < 0.6:
+            add("info", "Path data covers only part of your history",
+                f"MAE/MFE analysis covers {cov * 100:.0f}% of settled trades. Path "
+                f"logging is recent and untracked positions are never sampled, and "
+                f"those are disproportionately the -100% losses — so execution "
+                f"numbers here are optimistically biased. Profit/loss numbers above "
+                f"are from the results ledger and are NOT affected.")
+
+    # ---- markets: prune only with a real sample ------------------------
+    neg = [d for d in dims["by_instrument"]
+           if d["total"] >= MIN_N_PRUNE and d["net_profit"] < 0]
+    if neg:
+        worst = min(neg, key=lambda d: d["net_profit"])
+        add("warn", f"{len(neg)} market(s) lose money on a real sample",
+            f"Worst: {worst['key']} at {worst['net_profit']:+.2f} over "
+            f"{worst['total']} trades ({worst['expectancy']:+.3f}/trade). Listed in "
+            f"By Instrument; blocking them would have improved the book by roughly "
+            f"${abs(sum(d['net_profit'] for d in neg)):.2f} historically — but that is "
+            f"in-sample, so re-check on the next block of trades before trusting it.")
+    pos = [d for d in dims["by_instrument"]
+           if d["total"] >= MIN_N_EDGE and d["net_profit"] > 0]
+    if pos:
+        best = max(pos, key=lambda d: d["net_profit"])
+        add("good", f"{best['key']} is your most reliable market",
+            f"{best['net_profit']:+.2f} over {best['total']} trades "
+            f"({best['expectancy']:+.3f}/trade, win rate {best['win_rate']}%, "
+            f"PF {best['profit_factor']}).")
+
+    # ---- timeframe: the binding constraint is the timeframe, not the market
+    tf_rows = [d for d in dims["by_timeframe"] if d["total"] >= MIN_N_HINT]
+    if len(tf_rows) >= 2:
+        best_tf = max(tf_rows, key=lambda d: d["expectancy"])
+        worst_tf = min(tf_rows, key=lambda d: d["expectancy"])
+        if best_tf["expectancy"] - worst_tf["expectancy"] > 0:
+            add("info", "Timeframe matters more than instrument",
+                f"Best {best_tf['key']} {best_tf['expectancy']:+.3f}/trade "
+                f"(n={best_tf['total']}) vs worst {worst_tf['key']} "
+                f"{worst_tf['expectancy']:+.3f}/trade (n={worst_tf['total']}). "
+                f"Risk per trade at a 1.5xATR stop is driven mainly by the timeframe, "
+                f"because the minimum multiplier x ATR is roughly constant across "
+                f"symbols — so tune timeframes first.")
+
+    # ---- does signal strength actually predict anything? ---------------
+    sig_rows = [d for d in dims["by_signal_range"] if d["total"] >= MIN_N_HINT]
+    if len(sig_rows) >= 3:
+        ordered = sorted(sig_rows, key=lambda d: d["key"])
+        low, high = ordered[0], ordered[-1]
+        if high["expectancy"] <= low["expectancy"]:
+            add("warn", "Signal strength is not predicting profit",
+                f"The weakest bucket ({low['key']}: {low['expectancy']:+.3f}/trade, "
+                f"n={low['total']}) beats the strongest ({high['key']}: "
+                f"{high['expectancy']:+.3f}/trade, n={high['total']}). Raising "
+                f"min-strength then only throttles trade count — it is a volume dial, "
+                f"not a risk filter. Judge it on expectancy, never on win rate.")
+        else:
+            add("good", "Signal strength is ordering profit correctly",
+                f"{high['key']}: {high['expectancy']:+.3f}/trade vs {low['key']}: "
+                f"{low['expectancy']:+.3f}/trade — raising min-strength is supported "
+                f"by the data.")
+
+    # ---- direction bias -------------------------------------------------
+    d_rows = [d for d in dims["by_direction"] if d["total"] >= MIN_N_HINT]
+    if len(d_rows) == 2:
+        a, b = d_rows
+        if abs(a["expectancy"] - b["expectancy"]) > 0:
+            better = max(d_rows, key=lambda d: d["expectancy"])
+            add("info", f"{better['key']} side is doing the work",
+                f"{better['key']} {better['expectancy']:+.3f}/trade (n={better['total']}) "
+                f"vs the other side "
+                f"{min(d_rows, key=lambda d: d['expectancy'])['expectancy']:+.3f}/trade. "
+                f"A gap this size on these samples is evidence about the regime, not "
+                f"proof of a structural bias — the underlying price drifted one way.")
+
+    # ---- exit rules: which ending pays ---------------------------------
+    ex_rows = [e for e in exits if e["count"] >= MIN_N_HINT]
+    if ex_rows:
+        best_ex = max(ex_rows, key=lambda e: e["net"])
+        worst_ex = min(ex_rows, key=lambda e: e["net"])
+        if worst_ex["net"] < 0:
+            parts = "; ".join("%s n=%d %+.2f" % (e["label"], e["count"], e["net"])
+                              for e in ex_rows)
+            add("info", "Which exit is costing you",
+                f"Every ending with a real sample: {parts}. "
+                f"Best {best_ex['label']} ({best_ex['net']:+.2f}), worst "
+                f"{worst_ex['label']} ({worst_ex['net']:+.2f}).")
+
+    # ---- risk of ruin / drawdown context -------------------------------
+    if core.get("max_drawdown") and core["max_drawdown"] < 0:
+        ratio = abs(core["max_drawdown"]) / core["gross_loss"] if core["gross_loss"] else None
+        add("info", "Drawdown context",
+            f"Max peak-to-trough drawdown {core['max_drawdown']:+.2f} over the "
+            f"cumulative P/L curve"
+            + (f", i.e. {ratio * 100:.0f}% of all the money lost — you gave back "
+               f"more than half your total losses before recovering."
+               if ratio and ratio > 0.5 else ".")
+            + f" Longest losing streak {core['longest_loss_streak']} trades.")
+    return ins
+
+
 def _compute_analysis(settled):
-    by_instrument = {}
-    by_timeframe = {}
-    by_signal = {}
+    """Expert-grade analytics over every settled trade the app has recorded.
+
+    Keeps the original response keys (settled/wins/losses/win_rate/net_profit/
+    by_instrument/by_timeframe/by_signal_range/best_setups) so nothing that
+    already consumes this endpoint breaks, and adds the deeper layers.
+    """
+    paths = _path_records()
+
+    # Restart artefacts: an adopted record's t_open IS the adoption moment, so a
+    # stop firing seconds later is a restart cost, not a signal outcome.
+    ARTEFACT_WINDOW_S = 120.0
+    artefact_ids = set()
+    for cid, rec in paths.items():
+        if (rec.get("adopted") and rec.get("exit_reason") == "stop_loss"
+                and (rec.get("hold_s") or 0) < ARTEFACT_WINDOW_S):
+            artefact_ids.add(cid)
+    art_holds = sorted((paths[c].get("hold_s") or 0) for c in artefact_ids)
+    artefacts = {
+        "count": len(artefact_ids),
+        "window_s": ARTEFACT_WINDOW_S,
+        "median_hold_s": (art_holds[len(art_holds) // 2] if art_holds else 0.0),
+    }
+
+    profits_in_order = []
+    for r in settled:
+        try:
+            profits_in_order.append(float(r.get("profit") or 0))
+        except (TypeError, ValueError):
+            profits_in_order.append(0.0)
+
+    core = _stats_block(settled)
+    # _stats_block names the sample size "total"; the API contract (and the UI)
+    # call it "settled". Keep BOTH so the existing frontend keeps working.
+    core["settled"] = core["total"]
+
+    # Tail dependence: how much of the gross profit the best 5% of trades make.
+    gross_win = core["gross_win"]
+    wins_sorted = sorted((p for p in profits_in_order if p > 0), reverse=True)
+    top5_share = None
+    if wins_sorted and gross_win > 0:
+        k = max(1, int(len(wins_sorted) * 0.05))
+        top5_share = round(sum(wins_sorted[:k]) / gross_win, 3)
+
+    full_losses = 0
+    for r in settled:
+        try:
+            stake = float(r.get("stake") or 0)
+            pf = float(r.get("profit") or 0)
+        except (TypeError, ValueError):
+            continue
+        if stake > 0 and pf <= -0.95 * stake:
+            full_losses += 1
+    full_loss_pct = round(100.0 * full_losses / len(settled), 1) if settled else None
+
+    dd = _max_drawdown(profits_in_order)
+    sw, sl = _streaks(profits_in_order)
+    core.update({
+        "top5_share": top5_share,
+        "full_losses": full_losses,
+        "full_loss_pct": full_loss_pct,
+        "max_drawdown": dd,
+        "longest_win_streak": sw,
+        "longest_loss_streak": sl,
+    })
+
+    # ---- dimension tables (grouped, then given the full stats block) -----
+    groups = {"by_instrument": {}, "by_timeframe": {}, "by_signal_range": {},
+              "by_direction": {}}
     combos = {}
     for r in settled:
         sym = r.get("symbol")
         tf = r.get("timeframe")
         sig = _signal_bucket(r.get("signal_strength"))
+        dr = _direction_of(r.get("contract_type"))
         if sym:
-            by_instrument.setdefault(sym, []).append(r)
-        by_timeframe.setdefault(tf or "N/A", []).append(r)
+            groups["by_instrument"].setdefault(sym, []).append(r)
+        groups["by_timeframe"].setdefault(tf or "unknown", []).append(r)
         if sig:
-            by_signal.setdefault(sig, []).append(r)
+            groups["by_signal_range"].setdefault(sig, []).append(r)
+        if dr:
+            groups["by_direction"].setdefault(dr, []).append(r)
         if sym and tf and sig:
             combos.setdefault((sym, tf, sig), []).append(r)
 
+    dims = {}
+    for name, data in groups.items():
+        rows = []
+        for key, items in data.items():
+            row = _stats_block(items)
+            row["key"] = key
+            rows.append(row)
+        # Rank by EXPECTANCY, not win rate: with a fat-tail exit a high win rate
+        # can lose money, so win-rate ranking orders buckets wrongly.
+        rows.sort(key=lambda d: (-(d["expectancy"] or 0), -d["total"]))
+        dims[name] = rows
+
     best_setups = []
     for (sym, tf, sig), items in combos.items():
-        row = _stat(items)
+        row = _stats_block(items)
         row.update({"symbol": sym, "timeframe": tf, "signal_range": sig})
         best_setups.append(row)
-    # Only setups with a meaningful sample, ranked by win rate.
     best_setups = [s for s in best_setups if s["total"] >= 3]
-    best_setups.sort(key=lambda s: (-s["win_rate"], -s["total"]))
+    best_setups.sort(key=lambda s: (-(s["expectancy"] or 0), -s["total"]))
 
-    total = len(settled)
-    wins = sum(1 for r in settled if r.get("status") == "won")
-    net = round(sum(float(r.get("profit") or 0) for r in settled), 2)
-    return {
-        "settled": total,
-        "wins": wins,
-        "losses": total - wins,
-        "win_rate": round(100.0 * wins / total, 1) if total else 0.0,
-        "net_profit": net,
-        "by_instrument": _group_stats(by_instrument),
-        "by_timeframe": _group_stats(by_timeframe),
-        "by_signal_range": _group_stats(by_signal),
+    # ---- exit attribution ----------------------------------------------
+    ex_groups = {}
+    for r in settled:
+        label = r.get("exit_reason") or "unattributed"
+        ex_groups.setdefault(label, []).append(r)
+    exits = []
+    for label, items in ex_groups.items():
+        vals = []
+        for r in items:
+            try:
+                stake = float(r.get("stake") or 0) or 1.0
+                vals.append(100.0 * float(r.get("profit") or 0) / stake)
+            except (TypeError, ValueError):
+                continue
+        exits.append({
+            "label": label,
+            "count": len(items),
+            "net": round(sum(float(r.get("profit") or 0) for r in items), 2),
+            "avg_pct_of_stake": round(sum(vals) / len(vals), 1) if vals else None,
+        })
+    exits.sort(key=lambda e: -e["count"])
+
+    # ---- execution quality from MAE/MFE ---------------------------------
+    path_stats = {"n": 0, "coverage": None}
+    try:
+        with_path = []
+        for r in settled:
+            try:
+                rec = paths.get(int(r.get("contract_id")))
+            except (TypeError, ValueError):
+                rec = None
+            if rec and rec.get("profit_max_pct") is not None:
+                with_path.append((r, rec))
+        path_stats["n"] = len(with_path)
+        path_stats["coverage"] = (round(len(with_path) / len(settled), 3)
+                                  if settled else None)
+        if with_path:
+            winners = [(r, rec) for r, rec in with_path
+                       if float(r.get("profit") or 0) > 0]
+            mfes = [rec.get("profit_max_pct") or 0 for _, rec in winners]
+            finals = [rec.get("profit_final_pct") or 0 for _, rec in winners]
+            maes = [rec.get("profit_min_pct") or 0 for _, rec in winners]
+            path_stats["avg_mfe_pct"] = round(sum(mfes) / len(mfes), 4) if mfes else None
+            path_stats["avg_final_win_pct"] = (round(sum(finals) / len(finals), 4)
+                                               if finals else None)
+            if mfes and sum(mfes) > 0:
+                path_stats["capture"] = round(sum(finals) / sum(mfes), 3)
+            path_stats["winner_mae_pct"] = round(sum(maes) / len(maes), 4) if maes else None
+            path_stats["dipped_then_recovered"] = sum(
+                1 for _, rec in with_path
+                if (rec.get("profit_min_pct") or 0) < -0.15
+                and (rec.get("profit_final_pct") or 0) >= 0)
+            # Stop overshoot: how far past its own stop a stop-out actually
+            # executed (poll lag, not slippage).
+            over = []
+            for r, rec in with_path:
+                if rec.get("exit_reason") != "stop_loss" or rec.get("adopted"):
+                    continue
+                try:
+                    stake = float(rec.get("stake") or 0)
+                    sl = abs(float(rec.get("stop_loss") or 0))
+                    fin = float(rec.get("profit_final") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if stake > 0 and sl > 0 and fin < 0:
+                    over.append(100.0 * (abs(fin) - sl) / stake)
+            if over:
+                path_stats["overshoot_pct"] = round(sum(over) / len(over), 2)
+            holds = [rec.get("hold_s") for _, rec in with_path if rec.get("hold_s")]
+            if holds:
+                path_stats["avg_hold_s"] = round(sum(holds) / len(holds), 1)
+    except Exception as e:
+        logger.warning("Analysis: path join failed (%r) — path section omitted", e)
+
+    # ---- time-of-day buckets -------------------------------------------
+    by_hour = {}
+    for r in settled:
+        t = r.get("time")
+        if not t:
+            continue
+        try:
+            h = time.localtime(float(t)).tm_hour
+        except (TypeError, ValueError, OSError):
+            continue
+        by_hour.setdefault(h, []).append(r)
+    hours = []
+    for h, items in by_hour.items():
+        row = _stats_block(items)
+        row["key"] = f"{h:02d}:00"
+        hours.append(row)
+    hours.sort(key=lambda d: d["key"])
+
+    insights = _build_insights(core, dims, exits, path_stats, artefacts)
+
+    out = dict(core)
+    out.update({
+        "by_instrument": dims["by_instrument"],
+        "by_timeframe": dims["by_timeframe"],
+        "by_signal_range": dims["by_signal_range"],
+        "by_direction": dims["by_direction"],
         "best_setups": best_setups[:15],
-    }
+        "by_hour": hours,
+        "exits": exits,
+        "paths": path_stats,
+        "artefacts": artefacts,
+        "insights": insights,
+        "thresholds": {"min_n_hint": MIN_N_HINT, "min_n_edge": MIN_N_EDGE,
+                       "min_n_prune": MIN_N_PRUNE},
+    })
+    return out
 
 
 @app.route("/api/analysis")

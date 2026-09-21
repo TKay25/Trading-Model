@@ -1241,8 +1241,14 @@ class TradingDashboardApp {
     }
 
     /**
-     * Fetch win/loss analytics (by instrument, signal range, timeframe, and
-     * best symbol×timeframe×signal setups) and render them in the modal.
+     * Winning Analysis — expert-grade trade analytics.
+     *
+     * The backend sends expectancy, profit factor, Wilson confidence intervals,
+     * exit attribution, execution quality (MAE/MFE) and generated findings. This
+     * renders them and deliberately does NOT rank by win rate any more: with a
+     * fat-tail exit a high win rate can lose money (measured here: mean +8.66%
+     * but median -11.67% at a 36.6% win rate), so ranking buckets by win rate
+     * puts them in close to the opposite order to profitability.
      */
     async _loadAnalysis() {
         const setKpi = (id, val, cls) => {
@@ -1256,64 +1262,235 @@ class TradingDashboardApp {
             const data = await resp.json();
             if (!data.success) throw new Error(data.error || 'Could not load analysis');
             const net = data.net_profit ?? 0;
-            setKpi('anSettled', data.settled);
-            setKpi('anWins', data.wins, 'pos');
-            setKpi('anLosses', data.losses, 'neg');
-            setKpi('anWinRate', (data.win_rate ?? 0).toFixed(1) + '%', data.win_rate >= 50 ? 'pos' : 'neg');
-            setKpi('anNet', (net >= 0 ? '+' : '') + '$' + net.toFixed(2), net >= 0 ? 'pos' : 'neg');
-            this._renderAnalysisTable('anByInstrument', data.by_instrument || []);
-            this._renderAnalysisTable('anBySignal', data.by_signal_range || []);
-            this._renderAnalysisTable('anByTimeframe', data.by_timeframe || []);
-            this._renderBestSetups(data.best_setups || []);
+            setKpi('anSettled', data.settled ?? 0);
+            setKpi('anWins', data.wins ?? 0, 'pos');
+            setKpi('anLosses', data.losses ?? 0, 'neg');
+            setKpi('anWinRate', (data.win_rate ?? 0).toFixed(1) + '%',
+                   data.win_rate >= 50 ? 'pos' : 'neg');
+            setKpi('anNet', this._anMoney(net), net >= 0 ? 'pos' : 'neg');
+
+            this._renderAnMetrics(data);
+            this._renderAnInsights(data.insights || []);
+            this._renderAnPaths(data.paths, data.artefacts);
+            this._renderAnExits(data.exits || []);
+
+            this._renderAnTable('anByInstrument', data.by_instrument || [], 1,
+                'No settled trades with an instrument recorded.');
+            this._renderAnTable('anByTimeframe', data.by_timeframe || [], 1,
+                'No settled trades with a timeframe recorded (auto-trades record it).');
+            this._renderAnTable('anBySignal', data.by_signal_range || [], 1,
+                'No settled trades with a signal strength recorded.');
+            this._renderAnTable('anByDirection', data.by_direction || [], 1,
+                'No settled trades with a BUY/SELL direction recorded.');
+            this._renderAnTable('anByHour', data.by_hour || [], 1,
+                'No settled trades with a usable close time.');
+            this._renderAnTable('anBestSetups', data.best_setups || [], 3,
+                'Needs 3+ settled trades per symbol × timeframe × signal combination.');
         } catch (err) {
-            const msg = '<tr class="history-empty"><td colspan="7">' + String(err && err.message || err) + '</td></tr>';
-            ['anBestSetups', 'anByInstrument', 'anBySignal', 'anByTimeframe'].forEach(id => {
+            const msg = String((err && err.message) || err);
+            ['anMetrics', 'anInsights', 'anPaths', 'anExits',
+             'anBestSetups', 'anByInstrument', 'anByTimeframe', 'anBySignal',
+             'anByDirection', 'anByHour'].forEach(id => {
                 const el = document.getElementById(id);
-                if (el) el.innerHTML = msg;
+                if (el) el.innerHTML = '<div class="an-insight critical"><div class="an-insight-detail">' +
+                    this._anEsc(msg) + '</div></div>';
             });
         }
     }
 
-    _renderAnalysisTable(id, rows) {
+    _anEsc(s) {
+        return String(s === null || s === undefined ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    _anMoney(v, digits = 2) {
+        if (v === null || v === undefined || isNaN(v)) return '&mdash;';
+        return (v >= 0 ? '+' : '') + '$' + Number(v).toFixed(digits);
+    }
+
+    _anNum(v, digits = 2, suffix = '') {
+        if (v === null || v === undefined || isNaN(v)) return '&mdash;';
+        return Number(v).toFixed(digits) + suffix;
+    }
+
+    _anDuration(secs) {
+        if (secs === null || secs === undefined || isNaN(secs)) return '&mdash;';
+        const s = Math.round(Number(secs));
+        if (s < 90) return s + 's';
+        const m = Math.floor(s / 60);
+        if (m < 90) return m + 'm ' + (s % 60) + 's';
+        return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+    }
+
+    _anVerdict(r) {
+        const v = r.verdict || 'insufficient';
+        const text = {
+            edge: 'EDGE', positive: 'positive', promising: 'promising',
+            negative: 'NEGATIVE', weak: 'weak', flat: 'flat',
+            insufficient: 'thin sample'
+        }[v] || v;
+        return '<span class="an-v an-v-' + v + '">' + text + '</span>';
+    }
+
+    /** The eight quality columns shared by every dimension table. */
+    _anQualityCells(r) {
+        const pf = (r.profit_factor === null || r.profit_factor === undefined)
+            ? ((r.gross_loss === 0 && r.gross_win > 0) ? '&infin;' : '&mdash;')
+            : Number(r.profit_factor).toFixed(2);
+        const ci = (r.win_rate_ci_low === null || r.win_rate_ci_low === undefined)
+            ? '&mdash;'
+            : Math.round(r.win_rate_ci_low) + '&ndash;' + Math.round(r.win_rate_ci_high) + '%';
+        const mark = r.significant ? '' :
+            ' <span class="an-insig-mark" title="95% CI straddles 50% — not distinguishable from chance">~</span>';
+        return '<td>' + r.total + '</td>'
+            + '<td><span class="' + (r.win_rate >= 50 ? 'pos' : 'neg') + '">'
+            + this._anNum(r.win_rate, 1, '%') + '</span>' + mark + '</td>'
+            + '<td class="an-ci">' + ci + '</td>'
+            + '<td><span class="' + ((r.expectancy || 0) >= 0 ? 'pos' : 'neg') + '">'
+            + this._anMoney(r.expectancy, 3) + '</span></td>'
+            + '<td>' + this._anNum(r.expectancy_r, 2, 'R') + '</td>'
+            + '<td>' + pf + '</td>'
+            + '<td><span class="' + (r.net_profit >= 0 ? 'pos' : 'neg') + '">'
+            + this._anMoney(r.net_profit) + '</span></td>'
+            + '<td>' + this._anVerdict(r) + '</td>';
+    }
+
+    /**
+     * @param keyFields 1 = a single key cell, 3 = symbol / timeframe / signal
+     */
+    _renderAnTable(id, rows, keyFields, emptyMsg) {
         const el = document.getElementById(id);
         if (!el) return;
+        const cols = keyFields + 8;
         if (!rows.length) {
-            el.innerHTML = '<tr class="history-empty"><td colspan="5">No settled trades in this view yet.</td></tr>';
+            el.innerHTML = '<tr class="history-empty"><td colspan="' + cols + '">' +
+                this._anEsc(emptyMsg) + '</td></tr>';
             return;
         }
         el.innerHTML = rows.map(r => {
-            const wr = r.win_rate.toFixed(1) + '%';
-            const net = (r.net_profit >= 0 ? '+' : '') + '$' + r.net_profit.toFixed(2);
-            return `<tr>
-                <td>${r.key}</td>
-                <td>${r.wins}</td>
-                <td>${r.losses}</td>
-                <td><span class="${r.win_rate >= 50 ? 'pos' : 'neg'}">${wr}</span></td>
-                <td><span class="${r.net_profit >= 0 ? 'pos' : 'neg'}">${net}</span></td>
-            </tr>`;
+            const key = keyFields === 3
+                ? '<td>' + this._anEsc(r.symbol) + '</td>'
+                  + '<td>' + this._anEsc(r.timeframe || '&mdash;') + '</td>'
+                  + '<td>' + this._anEsc(r.signal_range || '&mdash;') + '</td>'
+                : '<td>' + this._anEsc(r.key) + '</td>';
+            return '<tr>' + key + this._anQualityCells(r) + '</tr>';
         }).join('');
     }
 
-    _renderBestSetups(rows) {
-        const el = document.getElementById('anBestSetups');
+    _renderAnMetrics(d) {
+        const el = document.getElementById('anMetrics');
+        if (!el) return;
+        const pf = (d.profit_factor === null || d.profit_factor === undefined)
+            ? ((d.gross_loss === 0 && d.gross_win > 0) ? '&infin;' : '&mdash;')
+            : Number(d.profit_factor).toFixed(2);
+        const pfCls = (d.profit_factor === null || d.profit_factor === undefined)
+            ? '' : (d.profit_factor >= 1 ? 'pos' : 'neg');
+        const tail = (d.top5_share === null || d.top5_share === undefined)
+            ? '&mdash;' : Math.round(d.top5_share * 100) + '%';
+        const fullLoss = (d.full_loss_pct === null || d.full_loss_pct === undefined)
+            ? '&mdash;' : d.full_loss_pct.toFixed(0) + '%';
+        const items = [
+            ['Profit Factor', pf, pfCls, 'gross win &divide; gross loss'],
+            ['Expectancy', this._anMoney(d.expectancy, 3),
+                (d.expectancy || 0) >= 0 ? 'pos' : 'neg', 'per settled trade'],
+            ['Expectancy (R)', this._anNum(d.expectancy_r, 2, 'R'), '',
+                'profit &divide; $ actually risked'],
+            ['Payoff Ratio', this._anNum(d.payoff_ratio, 2, '&times;'), '',
+                'avg win &divide; avg loss'],
+            ['Avg Win', this._anMoney(d.avg_win), 'pos', (d.wins || 0) + ' winners'],
+            ['Avg Loss', this._anMoney(d.avg_loss), 'neg', (d.losses || 0) + ' losers'],
+            ['Max Drawdown', this._anMoney(d.max_drawdown), 'neg',
+                'peak-to-trough of the P/L curve'],
+            ['Worst Streak', (d.longest_loss_streak || 0) + ' losses', 'neg',
+                'best run ' + (d.longest_win_streak || 0) + ' wins'],
+            ['Tail Share', tail, '',
+                'of gross profit from the best 5% of trades'],
+            ['Full-Stake Losses', fullLoss, 'neg',
+                (d.full_losses || 0) + ' trades lost ~all stake'],
+        ];
+        el.innerHTML = items.map(it =>
+            '<div class="an-metric">'
+            + '<div class="an-metric-label">' + it[0] + '</div>'
+            + '<div class="an-metric-value ' + (it[2] || '') + '">' + it[1] + '</div>'
+            + '<div class="an-metric-sub">' + (it[3] || '') + '</div>'
+            + '</div>').join('');
+    }
+
+    _renderAnInsights(rows) {
+        const el = document.getElementById('anInsights');
         if (!el) return;
         if (!rows.length) {
-            el.innerHTML = '<tr class="history-empty"><td colspan="7">Need ≥3 settled trades with symbol + timeframe + signal strength recorded.</td></tr>';
+            el.innerHTML = '<div class="an-insight info"><div class="an-insight-detail">' +
+                'No findings yet &mdash; they appear once there are settled trades to measure.</div></div>';
+            return;
+        }
+        const order = { critical: 0, warn: 1, good: 2, info: 3 };
+        const icon = {
+            critical: 'exclamation-octagon-fill',
+            warn: 'exclamation-triangle-fill',
+            good: 'check-circle-fill',
+            info: 'info-circle-fill'
+        };
+        const sorted = rows.slice().sort((a, b) =>
+            (order[a.severity] ?? 9) - (order[b.severity] ?? 9));
+        el.innerHTML = sorted.map(f =>
+            '<div class="an-insight ' + this._anEsc(f.severity) + '">'
+            + '<div class="an-insight-title"><i class="bi bi-' +
+              (icon[f.severity] || 'info-circle') + '"></i> ' + this._anEsc(f.title) + '</div>'
+            + '<div class="an-insight-detail">' + this._anEsc(f.detail) + '</div>'
+            + '</div>').join('');
+    }
+
+    _renderAnExits(rows) {
+        const el = document.getElementById('anExits');
+        if (!el) return;
+        if (!rows.length) {
+            el.innerHTML = '<tr class="history-empty"><td colspan="4">' +
+                'No exit attribution yet &mdash; it needs trades closed while the bot was tracking them.</td></tr>';
             return;
         }
         el.innerHTML = rows.map(r => {
-            const wr = r.win_rate.toFixed(1) + '%';
-            const net = (r.net_profit >= 0 ? '+' : '') + '$' + r.net_profit.toFixed(2);
-            return `<tr>
-                <td>${r.symbol}</td>
-                <td>${r.timeframe}</td>
-                <td>${r.signal_range}</td>
-                <td>${r.wins}</td>
-                <td>${r.losses}</td>
-                <td><span class="${r.win_rate >= 50 ? 'pos' : 'neg'}">${wr}</span></td>
-                <td><span class="${r.net_profit >= 0 ? 'pos' : 'neg'}">${net}</span></td>
-            </tr>`;
+            const pct = (r.avg_pct_of_stake === null || r.avg_pct_of_stake === undefined)
+                ? '&mdash;'
+                : (r.avg_pct_of_stake >= 0 ? '+' : '') + Number(r.avg_pct_of_stake).toFixed(1) + '%';
+            return '<tr>'
+                + '<td>' + this._anEsc(r.label) + '</td>'
+                + '<td>' + r.count + '</td>'
+                + '<td><span class="' + ((r.avg_pct_of_stake || 0) >= 0 ? 'pos' : 'neg') + '">'
+                + pct + '</span></td>'
+                + '<td><span class="' + (r.net >= 0 ? 'pos' : 'neg') + '">'
+                + this._anMoney(r.net) + '</span></td>'
+                + '</tr>';
         }).join('');
+    }
+
+    _renderAnPaths(p, artefacts) {
+        const el = document.getElementById('anPaths');
+        if (!el) return;
+        const pct = v => (v === null || v === undefined || isNaN(v))
+            ? '&mdash;' : (v * 100).toFixed(1) + '%';
+        if (!p || !p.n) {
+            el.innerHTML = '<div class="an-kv"><span>Path data</span><span>none yet</span></div>'
+                + '<div class="an-kv"><span>Restart artefacts</span><span>'
+                + ((artefacts && artefacts.count) || 0) + ' excluded</span></div>';
+            return;
+        }
+        const rows = [
+            ['Trades with path data', p.n + ' (' + pct(p.coverage) + ' of settled)'],
+            ['Avg peak reached (MFE)', pct(p.avg_mfe_pct)],
+            ['Avg winner actually closed', pct(p.avg_final_win_pct)],
+            ['Profit capture ratio', pct(p.capture)],
+            ['Winners\u2019 avg dip (MAE)', pct(p.winner_mae_pct)],
+            ['Dipped then recovered', (p.dipped_then_recovered ?? 0) + ' trades'],
+            ['Stop overshoot', (p.overshoot_pct === undefined || p.overshoot_pct === null)
+                ? '&mdash;' : Number(p.overshoot_pct).toFixed(1) + '% of stake'],
+            ['Avg hold', this._anDuration(p.avg_hold_s)],
+            ['Restart artefacts excluded',
+                ((artefacts && artefacts.count) || 0) + ' stop-outs'],
+        ];
+        el.innerHTML = rows.map(r =>
+            '<div class="an-kv"><span>' + r[0] + '</span><span>' + r[1] + '</span></div>').join('');
     }
 
     /**

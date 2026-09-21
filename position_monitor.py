@@ -38,9 +38,87 @@ MAX_PATHS = 20000
 _SAVE_EVERY = 30.0            # seconds between throttled disk writes
 MISS_LIMIT = 8                # consecutive empty polls before we drop a contract
 
+# ---------------------------------------------------------------------------
+# LIVE P/L CACHE + THROTTLING (2026-09-21)
+#
+# Deriv rate-limits `proposal_open_contract` per ACCOUNT, and hard: measured
+# with the bot fully STOPPED on a single fresh session, 1 of 14 back-to-back
+# calls was accepted, and 0 of 14 after an 8-second quiet period -- so this is
+# not a burst limit that refills in a second.
+#
+# We were blowing through it because FOUR components each fired one call per
+# open contract:
+#     * this monitor                 (every position, every 2s)
+#     * app._reconcile_open_results  (semaphore 6)
+#     * /api/positions               (semaphore 10, on EVERY UI poll)
+#     * AutoTrader adoption sweep
+# With ~19 positions that is 40-60 calls per cycle. The failure was brutal and
+# silent: every call after the first came back `{"error":{"code":"RateLimit"}}`,
+# this monitor only inspects `profit`, so it saw NO data for ANY contract,
+# concluded the LINK was dead and reconnected -- forever (observed: a reconnect
+# every 10s, 19 positions with ZERO stop-loss enforcement). Each reconnect
+# opened ANOTHER session, which made the account-wide throttling worse: a
+# self-amplifying loop.
+#
+# So: this monitor is the ONLY component allowed to call
+# proposal_open_contract. Everyone else reads LIVE below (thread-safe), and a
+# RateLimit is treated as "slow down" -- never as a dead link or a dead
+# contract.
+# ---------------------------------------------------------------------------
+POLL_GAP = 0.30               # min seconds between POC calls inside one sweep
+RATE_LIMIT_MIN_BACKOFF = 20.0
+RATE_LIMIT_MAX_BACKOFF = 300.0
+
+LIVE = {}                     # cid(int) -> {profit, status, ts, stop, take_profit, symbol}
+_live_lock = threading.Lock()
+_live_health = {"last_ok": 0.0, "rate_limited": 0, "throttled": False, "backoff": 0.0}
+
+
+class RateLimited(Exception):
+    """Deriv throttled proposal_open_contract.
+
+    Deliberately NOT a ConnectionError: the link is fine and the contracts are
+    fine. Tearing the connection down (the old behaviour) leaked a session per
+    attempt and made the account-wide throttling worse.
+    """
+    def __init__(self, delay, reason="RateLimit"):
+        super().__init__(reason)
+        self.delay = delay
+        self.reason = reason
+
 _paths_lock = threading.Lock()
 trade_paths = {}              # contract_id (int) -> record
 _last_save = 0.0
+
+
+def live_snapshot(cids=None):
+    """Thread-safe copy of the last known live P/L per contract.
+
+    The UI and any other reader should use THIS instead of calling
+    proposal_open_contract themselves -- one poller, one shared quota.
+    """
+    with _live_lock:
+        if cids is None:
+            return dict(LIVE)
+        out = {}
+        for c in cids:
+            try:
+                k = int(c)
+            except (TypeError, ValueError):
+                continue
+            if k in LIVE:
+                out[k] = LIVE[k]
+        return out
+
+
+def live_health():
+    """Diagnostics: is the P/L feed healthy, or are we being throttled?"""
+    with _live_lock:
+        h = dict(_live_health)
+        h["cached"] = len(LIVE)
+    h["throttled"] = bool(h["throttled"] and
+                          (time.time() - (h["last_ok"] or 0)) > 30)
+    return h
 
 
 def load_trade_paths():
@@ -371,7 +449,17 @@ class PositionMonitor:
         a batch of stake-relative-era records (sl=0.20/tp=5.00) were still marked
         open long after their contracts had gone, which is exactly the geometry
         measured to be broken (17/17 stop-outs).
+
+        REFUSES to act on an EMPTY live set: an empty portfolio is how Deriv
+        answers an over-quota or otherwise degraded authenticated request, so
+        `drop_missing(set())` would retire EVERY record while the positions are
+        still open at Deriv (see _restore_live).
         """
+        if not live_ids:
+            logger.warning("drop_missing called with an EMPTY live set — refusing to "
+                           "retire any record (an empty portfolio means UNKNOWN, "
+                           "not 'everything closed')")
+            return 0
         dropped = 0
         for cid, rec in self._persisted_open().items():
             if cid in live_ids:
@@ -396,6 +484,21 @@ class PositionMonitor:
         except Exception as e:
             logger.warning("Restore: portfolio fetch failed (%r) — restoring every "
                            "persisted open record WITHOUT verification", e)
+            self.restore_open()
+            return
+        if not live:
+            # *** AN EMPTY PORTFOLIO IS NOT EVIDENCE THAT NOTHING IS OPEN ***
+            # Deriv answers an OVER-QUOTA authenticated request with an empty
+            # payload rather than an error (measured 2026-09-21), so "empty" and
+            # "you have no positions" are indistinguishable. Acting on it is
+            # catastrophic: `drop_missing(set())` retired EVERY persisted record
+            # while the positions were still open, leaving 19 real positions with
+            # no stop, no target and no tracking — and the dashboard reported a
+            # flat book, so nothing looked wrong. Treat the open set as UNKNOWN
+            # and restore unverified (same as the fetch-failed path above).
+            logger.warning("Restore: portfolio came back EMPTY — treating the open "
+                           "set as UNKNOWN and restoring every persisted open record "
+                           "unverified (this is how Deriv answers an over-quota call)")
             self.restore_open()
             return
         self.drop_missing(live)
@@ -541,6 +644,16 @@ class PositionMonitor:
 
             try:
                 await self._check(api, tracked)
+            except RateLimited as e:
+                # THROTTLED, not broken. Keep the session: reconnecting would
+                # leak another session and worsen the account-wide throttling
+                # (that loop is exactly what disabled SL/TP enforcement once
+                # every proposal_open_contract call started returning RateLimit).
+                cycles += 1
+                if cycles % 15 == 0:
+                    self._persist_open()
+                await asyncio.sleep(e.delay)
+                continue
             except Exception as e:
                 logger.warning(f"Position monitor check failed (%r); reconnecting", e)
                 await self._close(api)
@@ -563,6 +676,7 @@ class PositionMonitor:
     async def _check(self, api, tracked):
         answered = 0        # contracts that returned usable data this pass
         pending_miss = []   # contracts with no data, judged once we know the link is alive
+        rate_limited = 0    # contracts Deriv refused because the ACCOUNT is throttled
         for cid, lim in tracked.items():
             if not self._running:
                 return
@@ -582,12 +696,30 @@ class PositionMonitor:
                 logger.debug("Position monitor poll failed for %s: %r", cid, e)
                 resp = None
 
+            # Space the calls out. Firing one per contract as fast as the socket
+            # allows is what tripped Deriv's rate limit in the first place.
+            await asyncio.sleep(POLL_GAP)
+
+            err = ((resp or {}).get("error") or {}).get("code")
+            if err:
+                if err == "RateLimit":
+                    # The ACCOUNT is throttled. The remaining contracts will be
+                    # throttled too, so stop the sweep and surrender the rest of
+                    # this pass rather than burning the quota on rejections.
+                    # NOT a vanished contract and NOT a dead link.
+                    rate_limited += 1
+                    logger.debug("Position monitor throttled on %s", cid)
+                    break
+                logger.debug("Position monitor poll error for %s: %s", cid, err)
+                continue
+
             poc = (resp or {}).get("proposal_open_contract") or {}
             status = poc.get("status")
             profit = poc.get("profit")
 
             if status in ("sold", "expired", "won", "lost"):
                 self._sample(lim, profit)
+                self._publish_live(cid, lim, profit, status)
                 self.untrack(cid, reason="settled")
                 continue
             if profit is None:
@@ -601,6 +733,7 @@ class PositionMonitor:
 
             profit = float(profit)
             self._sample(lim, profit)
+            self._publish_live(cid, lim, profit, status)
 
             if status is None:
                 # Deriv auto-closes a multiplier at -100% of the stake and then
@@ -656,6 +789,20 @@ class PositionMonitor:
         # the account unprotected — observed: 16 positions dropped inside 5
         # seconds right after a restart, while every Deriv call returned empty
         # (a broken connection is indistinguishable from "all contracts gone"
+        # ---- throttling is neither a dead link nor a dead contract ---------
+        # Checked BEFORE the link-vs-contract rule below, because a RateLimit
+        # produces exactly the same symptom (no `profit` for any contract) and
+        # used to be misread as a dead link -- which reconnected, which opened a
+        # new session, which made the account-wide throttling worse. That loop
+        # ran every 10s with 19 unprotected positions behind it.
+        if rate_limited:
+            delay = self._note_rate_limited()
+            if answered == 0:
+                raise RateLimited(delay, f"RateLimit x{rate_limited}")
+            logger.info("Position monitor partially throttled (%d refused, %d "
+                        "answered) - continuing without reconnecting",
+                        rate_limited, answered)
+
         # unless you look at the pass as a whole). Raising forces _loop to close
         # and re-establish the connection instead of discarding our protection.
         if pending_miss and answered == 0 and len(tracked) > 1:
@@ -676,6 +823,62 @@ class PositionMonitor:
                 logger.warning("Position monitor dropped %s after %d empty "
                                "response(s) — contract gone while the bot was down?",
                                cid, miss)
+
+    # ------------------------------------------------------------------
+    # Live P/L publishing + throttling bookkeeping
+    # ------------------------------------------------------------------
+    def _publish_live(self, cid, lim, profit, status):
+        """Record the latest known P/L so the UI/AutoTrader can read it cached.
+
+        This is what makes the monitor the ONLY proposal_open_contract caller:
+        everyone else reads this instead of spending the account's rate limit.
+        It also carries the EFFECTIVE stop (the one break-even/trailing move),
+        so the dashboard can show a stop that has ratcheted into profit.
+        """
+        now = time.time()
+        with _live_lock:
+            LIVE[int(cid)] = {
+                "profit": None if profit is None else float(profit),
+                "status": status,
+                "ts": now,
+                "stop": lim.get("stop"),
+                "take_profit": lim.get("take_profit"),
+                "stop_loss": lim.get("stop_loss"),
+                "symbol": lim.get("symbol"),
+                "break_even": lim.get("break_even"),
+                "trail": lim.get("trail"),
+            }
+            _live_health["last_ok"] = now
+            _live_health["rate_limited"] = 0
+            _live_health["throttled"] = False
+            _live_health["backoff"] = 0.0
+            # Prune long-dead entries so this cannot grow forever, but keep them
+            # long enough for the results reconciler to read the final status of
+            # a contract that just settled.
+            if len(LIVE) > 400:
+                for k in [k for k, v in LIVE.items()
+                          if (v.get("status") or "open") != "open"
+                          and (now - (v.get("ts") or 0)) > 900]:
+                    LIVE.pop(k, None)
+
+    def _note_rate_limited(self):
+        """Deriv throttled us: back off exponentially and RECORD it.
+
+        We deliberately keep the connection. Closing it would open a new session
+        on the next attempt, and the account is throttled as a whole -- so
+        reconnecting adds load and leaks sessions rather than helping.
+        """
+        with _live_lock:
+            _live_health["rate_limited"] += 1
+            _live_health["throttled"] = True
+            n = _live_health["rate_limited"]
+            delay = min(RATE_LIMIT_MIN_BACKOFF * (2 ** max(0, n - 1)),
+                        RATE_LIMIT_MAX_BACKOFF)
+            _live_health["backoff"] = delay
+        logger.warning("Position monitor THROTTLED by Deriv (rate limit #%d on "
+                       "proposal_open_contract) - backing off %.0fs WITHOUT "
+                       "reconnecting, so open positions stay tracked", n, delay)
+        return delay
 
     async def _close(self, api):
         try:

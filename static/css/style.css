@@ -929,7 +929,37 @@ body {
 }
 
 /* ============ OPEN POSITIONS ============ */
-.positions-list { padding: 8px 12px 12px; }
+/* Positions are laid out as a responsive tile grid: at full width a single
+   column wasted most of the 1290px and made the section ~1400px tall for 11
+   positions. Tiles fill the row instead, roughly a third of the height. */
+.positions-list {
+    padding: 8px 12px 12px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+    gap: 8px;
+}
+.positions-empty, .positions-list .history-empty { grid-column: 1 / -1; }
+
+/* ============ TRADING & AUTO-TRADE (full width) ============ */
+.trade-section-hint { margin: 0; font-size: 11.5px; }
+.trade-panel-body {
+    display: grid;
+    grid-template-columns: minmax(270px, 360px) minmax(0, 1fr);
+    gap: 22px;
+    padding: 14px 16px 16px;
+    align-items: start;
+}
+.trade-col-manual { display: flex; flex-direction: column; }
+.trade-col-auto { min-width: 0; }
+/* The auto-trade controls were squeezed into a 316px column; full width they get
+   room, so let the chips and rows breathe instead of wrapping awkwardly. */
+.trade-col-auto .auto-trade-row { gap: 14px; }
+.trade-col-auto .bl-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.trade-col-auto .auto-blacklist { margin-top: 6px; }
+.trade-col-auto .auto-range { margin-top: 2px; }
+@media (max-width: 900px) {
+    .trade-panel-body { grid-template-columns: 1fr; gap: 16px; }
+}
 
 .positions-empty {
     text-align: center;
@@ -1639,6 +1669,45 @@ body {
 .analysis-table .pos { color: var(--green-bright); font-weight: 700; }
 .analysis-table .neg { color: var(--red-bright); font-weight: 700; }
 @media (max-width: 992px) { .analysis-grid { grid-template-columns: 1fr; } }
+
+/* Winning Analysis v2 — risk metrics, expert findings, execution quality.
+   Every panel is a plain bordered surface so it reads correctly in both themes
+   (the vars are theme-scoped). */
+.an-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 0 0 14px; }
+.an-metric { background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 8px 10px; }
+.an-metric-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); margin-bottom: 2px; }
+.an-metric-value { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
+.an-metric-value.pos { color: var(--green-bright); }
+.an-metric-value.neg { color: var(--red-bright); }
+.an-metric-sub { font-size: 10px; color: var(--text-muted); margin-top: 2px; line-height: 1.3; }
+
+.an-panel-wide { margin-bottom: 14px; }
+.an-insights { display: flex; flex-direction: column; gap: 8px; }
+.an-insight { border-left: 3px solid var(--border); background: var(--surface-2); border-radius: 0 8px 8px 0; padding: 8px 12px; }
+.an-insight-title { font-size: 12.5px; font-weight: 700; color: var(--text); margin-bottom: 3px; }
+.an-insight-detail { font-size: 12px; line-height: 1.5; color: var(--text-secondary); }
+.an-insight.critical { border-left-color: var(--red-bright); }
+.an-insight.warn { border-left-color: #fbbf24; }
+.an-insight.good { border-left-color: var(--green-bright); }
+.an-insight.info { border-left-color: var(--accent); }
+.an-insight.critical .an-insight-title i { color: var(--red-bright); }
+.an-insight.warn .an-insight-title i { color: #fbbf24; }
+.an-insight.good .an-insight-title i { color: var(--green-bright); }
+.an-insight.info .an-insight-title i { color: var(--accent); }
+
+.an-table-wrap { overflow-x: auto; }
+.an-ci { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.an-insig-mark { color: #fbbf24; font-weight: 700; cursor: help; }
+.an-v { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; }
+.an-v-edge, .an-v-positive { color: var(--green-bright); }
+.an-v-promising { color: #fbbf24; }
+.an-v-negative, .an-v-weak { color: var(--red-bright); }
+.an-v-flat, .an-v-insufficient { color: var(--text-muted); }
+
+.an-kv-list { display: flex; flex-direction: column; }
+.an-kv { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 6px 0; border-bottom: 1px dashed var(--border-soft); color: var(--text-secondary); }
+.an-kv:last-child { border-bottom: none; }
+.an-kv span:last-child { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
 .backtest-err { color: var(--red-bright); font-size: 12px; }
 
 @media (max-width: 700px) {
