@@ -39,39 +39,40 @@ class TradingChart {
     init() {
         if (!this.container) return;
 
+        const c = this._palette();
         this.chart = LightweightCharts.createChart(this.container, {
             layout: {
-                background: { color: '#0d1424' },
-                textColor: '#8ea3c0',
+                background: { color: c.bg },
+                textColor: c.text,
                 fontSize: 12,
                 fontFamily: 'Inter, -apple-system, sans-serif',
                 attributionLogo: false,
             },
             grid: {
-                vertLines: { color: 'rgba(30,41,59,0.5)' },
-                horzLines: { color: 'rgba(30,41,59,0.5)' },
+                vertLines: { color: c.grid },
+                horzLines: { color: c.grid },
             },
             crosshair: {
                 mode: LightweightCharts.CrosshairMode.Normal,
                 vertLine: {
-                    color: '#22d3ee',
+                    color: c.cross,
                     width: 1,
                     style: LightweightCharts.LineStyle.Dashed,
-                    labelBackgroundColor: '#155e75',
+                    labelBackgroundColor: c.crossLabel,
                 },
                 horzLine: {
-                    color: '#22d3ee',
+                    color: c.cross,
                     width: 1,
                     style: LightweightCharts.LineStyle.Dashed,
-                    labelBackgroundColor: '#155e75',
+                    labelBackgroundColor: c.crossLabel,
                 },
             },
             rightPriceScale: {
-                borderColor: '#1e293b',
+                borderColor: c.border,
                 scaleMargins: { top: 0.08, bottom: 0.22 },
             },
             timeScale: {
-                borderColor: '#1e293b',
+                borderColor: c.border,
                 timeVisible: true,
                 secondsVisible: false,
                 rightOffset: 12,
@@ -121,32 +122,33 @@ class TradingChart {
         this.rsiPaneEl = document.getElementById('rsiPane');
         if (!this.rsiPaneEl) return;
 
+        const c = this._palette();
         this.rsiChart = LightweightCharts.createChart(this.rsiPaneEl, {
             layout: {
-                background: { color: '#111a2e' },
-                textColor: '#8ea3c0',
+                background: { color: c.paneBg },
+                textColor: c.text,
                 fontSize: 11,
                 fontFamily: 'Inter, -apple-system, sans-serif',
                 attributionLogo: false,
             },
             grid: {
-                vertLines: { color: 'rgba(30,41,59,0.5)' },
-                horzLines: { color: 'rgba(30,41,59,0.5)' },
+                vertLines: { color: c.grid },
+                horzLines: { color: c.grid },
             },
-            rightPriceScale: { borderColor: '#1e293b', scaleMargins: { top: 0.12, bottom: 0.12 } },
-            timeScale: { borderColor: '#1e293b', timeVisible: true, secondsVisible: false, rightOffset: 12, barSpacing: 8 },
+            rightPriceScale: { borderColor: c.border, scaleMargins: { top: 0.12, bottom: 0.12 } },
+            timeScale: { borderColor: c.border, timeVisible: true, secondsVisible: false, rightOffset: 12, barSpacing: 8 },
             crosshair: {
                 mode: LightweightCharts.CrosshairMode.Normal,
-                vertLine: { color: '#22d3ee', width: 1, style: LightweightCharts.LineStyle.Dashed, labelBackgroundColor: '#155e75' },
-                horzLine: { color: '#22d3ee', width: 1, style: LightweightCharts.LineStyle.Dashed, labelBackgroundColor: '#155e75' },
+                vertLine: { color: c.cross, width: 1, style: LightweightCharts.LineStyle.Dashed, labelBackgroundColor: c.crossLabel },
+                horzLine: { color: c.cross, width: 1, style: LightweightCharts.LineStyle.Dashed, labelBackgroundColor: c.crossLabel },
             },
         });
 
         const common = { priceLineVisible: false, crosshairMarkerVisible: false };
-        this.rsiSeries = this.rsiChart.addLineSeries({ color: '#60a5fa', lineWidth: 1, lastValueVisible: true, ...common });          // RSI (13)
-        this.rsiSignalSeries = this.rsiChart.addLineSeries({ color: '#34d399', lineWidth: 2, lastValueVisible: true, ...common });   // Signal SMA(RSI,2)
-        this.rsiSmoothedSeries = this.rsiChart.addLineSeries({ color: '#f87171', lineWidth: 2, lastValueVisible: true, ...common }); // Smoothed SMA(RSI,7)
-        this.rsiMarketBaseSeries = this.rsiChart.addLineSeries({ color: '#fbbf24', lineWidth: 2, lastValueVisible: true, ...common }); // Market Base SMA(RSI,34)
+        this.rsiSeries = this.rsiChart.addLineSeries({ color: c.tdiRsi, lineWidth: 1, lastValueVisible: true, ...common });          // RSI (13)
+        this.rsiSignalSeries = this.rsiChart.addLineSeries({ color: c.tdiSignal, lineWidth: 2, lastValueVisible: true, ...common });   // Signal SMA(RSI,2)
+        this.rsiSmoothedSeries = this.rsiChart.addLineSeries({ color: c.tdiSmoothed, lineWidth: 2, lastValueVisible: true, ...common }); // Smoothed SMA(RSI,7)
+        this.rsiMarketBaseSeries = this.rsiChart.addLineSeries({ color: c.tdiBase, lineWidth: 2, lastValueVisible: true, ...common }); // Market Base SMA(RSI,34)
         this.rsiUpperSeries = this.rsiChart.addLineSeries({ color: 'rgba(96,165,250,0.45)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, lastValueVisible: false, ...common });
         this.rsiLowerSeries = this.rsiChart.addLineSeries({ color: 'rgba(96,165,250,0.45)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, lastValueVisible: false, ...common });
         this.rsiMidSeries = this.rsiChart.addLineSeries({ color: 'rgba(142,163,192,0.22)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, lastValueVisible: false, ...common });
@@ -174,19 +176,52 @@ class TradingChart {
     }
 
     /**
-     * Apply a theme ('dark' | 'light') to the price chart and RSI pane.
+     * Resolve a CSS custom property from :root, falling back to a literal.
      */
-    setTheme(theme) {
-        const dark = theme !== 'light';
-        const c = dark ? {
-            bg: '#0d1424', paneBg: '#111a2e', text: '#8ea3c0',
-            grid: 'rgba(30,41,59,0.5)', border: '#1e293b',
-            cross: '#22d3ee', crossLabel: '#155e75',
-        } : {
-            bg: '#ffffff', paneBg: '#f4f7fb', text: '#5b6b80',
-            grid: 'rgba(227,232,239,0.7)', border: '#e3e8ef',
-            cross: '#0ea5e9', crossLabel: '#0c4a6e',
+    _cssVar(name, fallback) {
+        try {
+            const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+            return v || fallback;
+        } catch (e) {
+            return fallback;
+        }
+    }
+
+    /**
+     * The chart palette, READ FROM THE STYLESHEET.
+     *
+     * This used to be a second hard-coded copy of the theme colours inside the
+     * JS, which meant the canvas drifted from the cards every time a colour was
+     * changed in style.css (exactly what happened with the light theme). The
+     * stylesheet is now the single source of truth and the fallbacks below are
+     * only a safety net if a token is ever missing.
+     */
+    _palette() {
+        const v = (n, f) => this._cssVar(n, f);
+        return {
+            bg: v('--chart-bg', '#0d1424'),
+            paneBg: v('--chart-pane-bg', '#111a2e'),
+            text: v('--chart-text', '#8ea3c0'),
+            grid: v('--chart-grid', 'rgba(30,41,59,0.50)'),
+            border: v('--chart-border', '#1e293b'),
+            cross: v('--chart-cross', '#22d3ee'),
+            crossLabel: v('--chart-cross-label', '#155e75'),
+            tdiRsi: v('--tdi-rsi', '#60a5fa'),
+            tdiSignal: v('--tdi-signal', '#34d399'),
+            tdiSmoothed: v('--tdi-smoothed', '#f87171'),
+            tdiBase: v('--tdi-base', '#fbbf24'),
         };
+    }
+
+    /**
+     * Apply a theme ('dark' | 'light') to the price chart and RSI pane.
+     *
+     * The `theme` argument is kept for API compatibility (theme.js passes it),
+     * but the colours now come from whichever theme is active in the DOM, so the
+     * two can never disagree.
+     */
+    setTheme(theme) { // eslint-disable-line no-unused-vars
+        const c = this._palette();
 
         if (this.chart) {
             this.chart.applyOptions({
@@ -212,6 +247,12 @@ class TradingChart {
                 },
             });
         }
+        // The TDI lines are part of the theme too — the legend dots in the
+        // markup use the same tokens, so the two stay in sync by construction.
+        if (this.rsiSeries) this.rsiSeries.applyOptions({ color: c.tdiRsi });
+        if (this.rsiSignalSeries) this.rsiSignalSeries.applyOptions({ color: c.tdiSignal });
+        if (this.rsiSmoothedSeries) this.rsiSmoothedSeries.applyOptions({ color: c.tdiSmoothed });
+        if (this.rsiMarketBaseSeries) this.rsiMarketBaseSeries.applyOptions({ color: c.tdiBase });
     }
 
     /**
@@ -396,21 +437,24 @@ class TradingChart {
     }
 
     /**
-     * Highlight a pattern on the chart with a marker.
+     * Mark a candle pattern on the chart.
+     *
+     * Deliberately does NOT do two things it used to:
+     *
+     *  1. It no longer creates a PRICE LINE. It used to add one at `price: 0`
+     *     with the pattern name as its title. Price 0 is far outside a 41,000
+     *     index's range, so the line itself was invisible — but the AXIS LABEL
+     *     still rendered, stamping "🟢 hanging_man" style text along the bottom
+     *     edge of the chart once per recent pattern. That is the stray text that
+     *     appeared to float below the candles next to the volume pane.
+     *
+     *  2. It no longer writes the full pattern name across the price action. Up
+     *     to half a dozen "THREE BLACK CROWS" / "INVERTED HAMMER" labels buried
+     *     the candles they were describing. The caller now passes a short code,
+     *     and only the most recent formation is labelled at all.
      */
-    highlightPattern(timestamp, type, direction) {
+    highlightPattern(timestamp, type, direction, label) {
         const color = direction === 'bullish' ? '#22ab94' : '#f23645';
-        const emoji = direction === 'bullish' ? '🟢' : '🔴';
-
-        this.candleSeries.createPriceLine({
-            price: 0,
-            color: color,
-            lineWidth: 0,
-            lineStyle: LightweightCharts.LineStyle.Solid,
-            axisLabelVisible: true,
-            title: `${emoji} ${type}`,
-        });
-
         this.candleSeries.setMarkers([
             ...(this.candleSeries.markers() || []),
             {
@@ -418,7 +462,7 @@ class TradingChart {
                 position: direction === 'bullish' ? 'belowBar' : 'aboveBar',
                 color: color,
                 shape: direction === 'bullish' ? 'arrowUp' : 'arrowDown',
-                text: type.replace(/_/g, ' ').toUpperCase(),
+                text: label || '',
             },
         ]);
     }
@@ -455,9 +499,12 @@ class TradingChart {
                 .map(([, p]) => p);
         }
 
-        // Drop any old M/W/H&S/flag markers so we don't stack duplicates.
+        // Drop any old pattern markers so we don't stack duplicates. Pattern
+        // markers are the only CIRCLES on the chart (highlightPattern uses
+        // arrowUp/arrowDown), so filtering on shape still removes them now that
+        // most of them carry no text.
         const existing = this.candleSeries.markers() || [];
-        const kept = existing.filter(m => !['M', 'W', 'HS', 'iHS', 'FLG', 'PNN'].includes(m.text));
+        const kept = existing.filter(m => m.shape !== 'circle');
         this.candleSeries.setMarkers(kept);
 
         const labelMap = {
@@ -467,7 +514,12 @@ class TradingChart {
             bullish_pennant: 'PNN', bearish_pennant: 'PNN',
         };
         const bullishTypes = ['double_bottom', 'inverted_head_shoulders', 'bullish_flag', 'bullish_pennant'];
-        mw.forEach(p => {
+        // Only the MOST RECENT formation carries a text label. Previously all
+        // eight did, which stamped M/W/HS/iHS/FLG/PNN across the price action and
+        // made the chart harder to read than the patterns it was describing.
+        // `mw` is sorted oldest-first above, so the last entry is the newest.
+        const labelIdx = mw.length - 1;
+        mw.forEach((p, idx) => {
             const isBullish = bullishTypes.includes(p.type);
             // Faint, background-style colour so candles stay readable.
             const color = isBullish ? 'rgba(34, 171, 148, 0.30)' : 'rgba(242, 54, 69, 0.30)';
@@ -511,7 +563,8 @@ class TradingChart {
                 this.patternLines.push(pole);
             }
 
-            // Subtle label at the first vertex only (no bold arrows).
+            // Subtle label at the first vertex only (no bold arrows), and only
+            // for the newest pattern.
             const first = (Array.isArray(p.points) && p.points.length) ? p.points[0] : (p.flagTop ? p.flagTop[0] : null);
             if (!first) return;
             this.candleSeries.setMarkers([
@@ -521,7 +574,7 @@ class TradingChart {
                     position: isBullish ? 'belowBar' : 'aboveBar',
                     color: isBullish ? 'rgba(34, 171, 148, 0.55)' : 'rgba(242, 54, 69, 0.55)',
                     shape: 'circle',
-                    text: labelMap[p.type] || 'M',
+                    text: idx === labelIdx ? (labelMap[p.type] || 'M') : '',
                 },
             ]);
         });
@@ -613,27 +666,49 @@ class TradingChart {
     }
 
     /**
-     * Resize handler.
+     * Size both charts to their containers.
+     *
+     * Uses the documented `chart.resize(w, h, forceRepaint)` rather than
+     * `applyOptions({ width, height })`. applyOptions only RECORDS the requested
+     * size and treats a repeated identical request as a no-op, so after a
+     * density change the canvas kept its old height — measured: still rendered
+     * at 442px inside a 360px pane 600ms later, i.e. visibly overflowing and
+     * clipped. resize() with forceRepaint applies immediately and reliably.
+     */
+    _applySize() {
+        if (this.chart) {
+            const w = this.container.clientWidth;
+            const h = this.container.clientHeight;
+            if (typeof this.chart.resize === 'function') this.chart.resize(w, h, true);
+            else this.chart.applyOptions({ width: w, height: h });
+        }
+        if (this.rsiChart && this.rsiPaneEl) {
+            const w = this.rsiPaneEl.clientWidth;
+            const h = this.rsiPaneEl.clientHeight;
+            if (typeof this.rsiChart.resize === 'function') this.rsiChart.resize(w, h, true);
+            else this.rsiChart.applyOptions({ width: w, height: h });
+        }
+    }
+
+    /**
+     * Resize handler: keep both charts sized to their containers.
      */
     _handleResize() {
         const panel = this.container.parentElement ? this.container.parentElement.parentElement : this.container;
-        const applySize = () => {
-            if (this.chart) {
-                this.chart.applyOptions({
-                    width: this.container.clientWidth,
-                    height: this.container.clientHeight,
-                });
-            }
-            if (this.rsiChart && this.rsiPaneEl) {
-                this.rsiChart.applyOptions({
-                    width: this.rsiPaneEl.clientWidth,
-                    height: this.rsiPaneEl.clientHeight,
-                });
-            }
-        };
-        const observer = new ResizeObserver(applySize);
+        const observer = new ResizeObserver(() => this._applySize());
         observer.observe(panel);
-        applySize();
+        this._applySize();
+    }
+
+    /**
+     * Force the charts to re-measure their containers (e.g. after a density
+     * change alters the pane heights). Safe to call at any time.
+     */
+    resize() {
+        this._applySize();
+        // One extra pass next frame is free insurance against a layout that has
+        // not been flushed when this is called synchronously.
+        requestAnimationFrame(() => this._applySize());
     }
 
     /**

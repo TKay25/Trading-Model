@@ -2124,11 +2124,35 @@ class TradingDashboardApp {
         this._displaySignal(signal, { tdi: tdiValues, patterns });
 
         // Highlight recent single-candle formations (M/W/H&S/flags are drawn as shapes).
+        //
+        // Only the MOST RECENT formation gets a text label. Labelling every one of
+        // them wrote half a dozen long uppercase names ("THREE BLACK CROWS",
+        // "INVERTED HAMMER") straight across the candles and made the price action
+        // unreadable. The others are bare arrows — direction is still obvious from
+        // the shape and its position relative to the bar.
+        const PATTERN_CODE = {
+            hammer: 'HAM', hanging_man: 'HNG', inverted_hammer: 'IHM', shooting_star: 'SHT',
+            bullish_engulfing: 'BEN', bearish_engulfing: 'SEN',
+            bullish_harami: 'BHA', bearish_harami: 'SHA',
+            piercing_line: 'PIL', dark_cloud_cover: 'DCC',
+            morning_star: 'MST', evening_star: 'EST',
+            three_white_soldiers: '3WS', three_black_crows: '3BC',
+            doji: 'DOJ', dragonfly_doji: 'DFD', gravestone_doji: 'GSD',
+            spinning_top: 'SPT', tweezer_bottom: 'TWB', tweezer_top: 'TWT',
+            bullish_marubozu: 'BMZ', bearish_marubozu: 'SMZ',
+        };
+        const codeOf = (t) => PATTERN_CODE[t] ||
+            (t || '').split('_').map(w => w[0] || '').join('').slice(0, 3).toUpperCase();
+
         const recentMarkers = patterns.filter(p =>
             p.index >= this.candles.length - 6 &&
             !['double_top', 'double_bottom', 'head_and_shoulders', 'inverted_head_shoulders',
               'bullish_flag', 'bearish_flag', 'bullish_pennant', 'bearish_pennant'].includes(p.type));
-        recentMarkers.forEach(p => this.chart.highlightPattern(p.timestamp, p.type, p.direction));
+        const newest = recentMarkers.length ? recentMarkers[recentMarkers.length - 1] : null;
+        recentMarkers.forEach(p => {
+            this.chart.highlightPattern(p.timestamp, p.type, p.direction,
+                p === newest ? codeOf(p.type) : '');
+        });
 
         // Draw M (double-top) / W (double-bottom) shapes on the price chart.
         this.chart.drawMWPatterns(patterns);

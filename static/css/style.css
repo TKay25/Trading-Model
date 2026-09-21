@@ -1998,3 +1998,240 @@ input[type="checkbox"] { accent-color: var(--accent); }
     }
     .stat-card:hover, .toolbar-btn:hover, .theme-toggle:hover { transform: none; }
 }
+
+/* ============================================================================
+   CHART PALETTE TOKENS
+   ----------------------------------------------------------------------------
+   chart.js used to hold its OWN copy of the theme colours (bg #0d1424, pane
+   #111a2e, grid, border, crosshair) — a second palette that silently drifts
+   from the stylesheet every time a colour changes. The chart now reads these
+   tokens instead, so the canvas is incapable of disagreeing with the cards.
+   ============================================================================ */
+:root, [data-theme="dark"] {
+    --chart-bg: var(--surface);
+    --chart-pane-bg: var(--surface-2);
+    --chart-text: var(--text-secondary);
+    --chart-grid: rgba(30,41,59,0.50);
+    --chart-border: var(--border);
+    --chart-cross: var(--accent-2);
+    --chart-cross-label: #155e75;
+    --tdi-rsi: #60a5fa;
+    --tdi-signal: #34d399;
+    --tdi-smoothed: #f87171;
+    --tdi-base: #fbbf24;
+}
+
+[data-theme="light"] {
+    --chart-grid: rgba(203,213,225,0.55);
+    --chart-cross: #0284c7;
+    --chart-cross-label: #075985;
+    /* Deepened for light mode: the neon variants were tuned for near-black and
+       the amber line in particular washed out against a white pane. */
+    --tdi-rsi: #2563eb;
+    --tdi-signal: #059669;
+    --tdi-smoothed: #dc2626;
+    --tdi-base: #b45309;
+}
+
+.rsi-legend .dot-rsi { background: var(--tdi-rsi); }
+.rsi-legend .dot-signal { background: var(--tdi-signal); }
+.rsi-legend .dot-smoothed { background: var(--tdi-smoothed); }
+.rsi-legend .dot-base { background: var(--tdi-base); }
+
+/* ============================================================================
+   DENSITY — comfortable (default) / compact
+   ----------------------------------------------------------------------------
+   Compact exists to put as much as possible on one screen at 100% browser zoom,
+   without touching the browser's own zoom. So it shrinks the three things that
+   actually consume height: the CHART PANES (which alone are ~650px at default),
+   the accumulated padding/margins, AND the font sizes.
+   The biggest single win is the KPI strip: 8 tiles go from two rows to one,
+   which is ~75px of pure savings on its own.
+   ============================================================================ */
+[data-density="compact"] {
+    --control-h: 24px;
+    --control-h-sm: 20px;
+    --radius: 8px;
+    --radius-sm: 7px;
+    --radius-xs: 5px;
+}
+
+/* ---------- Chrome: topbar + page gutters ---------- */
+[data-density="compact"] .topbar-inner { height: 44px; padding: 0 12px; max-width: none; }
+[data-density="compact"] .brand-icon { width: 24px; height: 24px; font-size: 12px; border-radius: 7px; }
+[data-density="compact"] .brand-text { font-size: 14px; letter-spacing: -0.2px; }
+[data-density="compact"] .topbar-left { gap: 16px; }
+[data-density="compact"] .topbar-link { font-size: 11.5px; padding: 4px 9px; }
+[data-density="compact"] .theme-toggle { width: 26px; height: 26px; font-size: 12px; }
+[data-density="compact"] .status-badge { font-size: 10.5px; padding: 3px 9px; gap: 5px; }
+[data-density="compact"] .status-dot { width: 6px; height: 6px; }
+[data-density="compact"] .status-balance { font-size: 11.5px; padding: 3px 10px; gap: 6px; }
+[data-density="compact"] .balance-label { font-size: 8.5px; }
+[data-density="compact"] .topbar-right { gap: 9px; }
+[data-density="compact"] .main-content { padding: 9px 12px 16px; max-width: none; }
+
+/* ---------- KPI strip: one row instead of two ---------- */
+[data-density="compact"] .stats-strip {
+    grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+    gap: 6px;
+    margin-bottom: 0;
+}
+[data-density="compact"] .stat-card { padding: 4px 7px; gap: 6px; border-radius: 8px; }
+[data-density="compact"] .stat-icon { width: 20px; height: 20px; font-size: 10px; border-radius: 6px; }
+[data-density="compact"] .stat-label { font-size: 8px; letter-spacing: 0.25px; }
+[data-density="compact"] .stat-label small { font-size: 7.5px; }
+[data-density="compact"] .stat-value { font-size: 12px; }
+[data-density="compact"] .stat-sub { font-size: 9px; }
+[data-density="compact"] .stat-info { gap: 0; }
+
+/* ---------- Charts: the single biggest height consumer ---------- */
+[data-density="compact"] .dashboard-grid { gap: 9px; grid-template-columns: minmax(0,1fr) 320px; }
+[data-density="compact"] #chartContainer { flex-basis: 288px; min-height: 240px; }
+[data-density="compact"] #rsiPane { height: 74px; }
+[data-density="compact"] .chart-panel { border-radius: 8px; }
+[data-density="compact"] .chart-toolbar { padding: 5px 8px; margin-bottom: 8px; gap: 8px; border-radius: 8px; }
+[data-density="compact"] .symbol-select { font-size: 11px; }
+[data-density="compact"] .tf-btn { font-size: 10px; padding: 0 6px; min-height: 18px; }
+[data-density="compact"] .tf-group { padding: 2px; gap: 1px; }
+[data-density="compact"] .live-price-label { font-size: 8.5px; }
+[data-density="compact"] .live-price-value { font-size: 12px; }
+[data-density="compact"] .live-change { font-size: 10.5px; }
+[data-density="compact"] .live-price { padding: 3px 8px; }
+[data-density="compact"] .rsi-pane-title { padding: 3px 8px 0; font-size: 8.5px; gap: 8px; letter-spacing: 0.3px; }
+[data-density="compact"] .rsi-legend .dot { width: 6px; height: 6px; }
+
+/* ---------- Sidebar ---------- */
+[data-density="compact"] .sidebar { gap: 8px; }
+/* The connect bar holds a button + status + balance chip in a ~320px column.
+   Narrowing the sidebar in compact made that row overflow the viewport and put
+   a horizontal scrollbar on the whole page (measured: 17px at 2160px wide).
+   Wrapping is the robust fix — the chip simply drops to a second line. */
+[data-density="compact"] .connect-bar { flex-wrap: wrap; gap: 6px; padding: 6px 9px; }
+[data-density="compact"] .connect-bar > * { min-width: 0; }
+[data-density="compact"] .connect-btn { font-size: 11px; padding: 5px 11px; }
+[data-density="compact"] .side-card { border-radius: 8px; }
+[data-density="compact"] .side-card-header { padding: 6px 9px 0; font-size: 11px; gap: 6px; }
+[data-density="compact"] .side-card-header i { font-size: 12px; }
+[data-density="compact"] .side-card-body { padding: 5px 9px 8px; }
+[data-density="compact"] .decision-badge { font-size: 15px; padding: 4px 10px; }
+[data-density="compact"] .signal-empty p { font-size: 11px; margin: 5px 0 0; }
+
+/* ---------- Sections, headers, tables ---------- */
+[data-density="compact"] .history-section { margin-top: 8px; border-radius: 8px; }
+[data-density="compact"] .history-header { padding: 5px 9px; gap: 8px; }
+[data-density="compact"] .history-title { font-size: 11.5px; }
+[data-density="compact"] .history-table { font-size: 11px; }
+[data-density="compact"] .history-table thead th { padding: 4px 8px; font-size: 8.5px; }
+[data-density="compact"] .history-table tbody td { padding: 3px 8px; }
+[data-density="compact"] .history-table-wrap { max-height: 250px; }
+[data-density="compact"] .toolbar-btn { font-size: 10.5px; padding: 0 8px; gap: 5px; }
+[data-density="compact"] .positions-count,
+[data-density="compact"] .positions-net { font-size: 10.5px; padding: 2px 8px; }
+
+/* ---------- Positions / performance ---------- */
+[data-density="compact"] .positions-list {
+    padding: 5px 8px 8px;
+    gap: 5px;
+    grid-template-columns: repeat(auto-fill, minmax(296px, 1fr));
+}
+[data-density="compact"] .position-item { padding: 5px 8px; margin-bottom: 5px; border-radius: 7px; }
+[data-density="compact"] .position-top { gap: 6px; margin-bottom: 4px; }
+[data-density="compact"] .position-meta { font-size: 9.5px; gap: 8px; margin-bottom: 5px; }
+[data-density="compact"] .pos-close,
+[data-density="compact"] .pos-apply { font-size: 10px; padding: 3px 8px; }
+[data-density="compact"] .perf-grid {
+    grid-template-columns: repeat(10, minmax(0, 1fr));
+    gap: 5px;
+    margin-bottom: 6px;
+}
+[data-density="compact"] .perf-tile { padding: 4px 6px; gap: 0; border-radius: 6px; }
+[data-density="compact"] .perf-label { font-size: 8px; letter-spacing: 0.2px; }
+[data-density="compact"] .perf-value { font-size: 11.5px; }
+[data-density="compact"] .equity-canvas { height: 68px; }
+
+/* ---------- Trading & auto-trade panel ---------- */
+[data-density="compact"] .trade-panel-body { padding: 7px 9px 9px; gap: 12px; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); }
+[data-density="compact"] .trade-field label { font-size: 9px; }
+[data-density="compact"] .trade-field input,
+[data-density="compact"] .trade-select { font-size: 11px; }
+[data-density="compact"] .trade-actions { gap: 6px; margin-top: 2px; }
+[data-density="compact"] .btn-buy,
+[data-density="compact"] .btn-sell { font-size: 11.5px; padding: 5px 12px; }
+[data-density="compact"] .switch-label { font-size: 10px; gap: 4px; }
+[data-density="compact"] .auto-label { font-size: 11px; }
+[data-density="compact"] .auto-min { font-size: 10px; }
+[data-density="compact"] .auto-num { font-size: 11px; }
+[data-density="compact"] .auto-trade-row { gap: 9px; }
+[data-density="compact"] .auto-trade-box { border-radius: 8px; }
+[data-density="compact"] .auto-blacklist { margin-top: 1px; }
+[data-density="compact"] .auto-bl-title { font-size: 10px; margin-bottom: 2px; }
+[data-density="compact"] .bl-chip { font-size: 9px; padding: 1px 6px; }
+[data-density="compact"] .sl-tp-hint { font-size: 9.5px; line-height: 1.35; }
+[data-density="compact"] .auto-hint { margin-top: 4px; }
+[data-density="compact"] .trade-status { font-size: 10.5px; padding: 4px 8px; }
+
+/* ---------- Winning Analysis ---------- */
+[data-density="compact"] .analysis-summary { gap: 5px; margin-bottom: 8px; }
+[data-density="compact"] .analysis-kpi { font-size: 10px; padding: 4px 9px; }
+[data-density="compact"] .analysis-kpi b { font-size: 12.5px; }
+[data-density="compact"] .an-metrics { gap: 5px; margin-bottom: 8px; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); }
+[data-density="compact"] .an-metric { padding: 4px 7px; }
+[data-density="compact"] .an-metric-label { font-size: 8.5px; }
+[data-density="compact"] .an-metric-value { font-size: 12.5px; }
+[data-density="compact"] .an-metric-sub { font-size: 8.5px; }
+[data-density="compact"] .analysis-panel { padding: 8px; border-radius: 8px; }
+[data-density="compact"] .analysis-panel-title { font-size: 10.5px; margin-bottom: 5px; }
+[data-density="compact"] .analysis-table { font-size: 10.5px; }
+[data-density="compact"] .analysis-table th,
+[data-density="compact"] .analysis-table td { padding: 3px 7px; }
+[data-density="compact"] .an-insight { padding: 5px 9px; }
+[data-density="compact"] .an-insight-title { font-size: 11px; }
+[data-density="compact"] .an-insight-detail { font-size: 10.5px; line-height: 1.4; }
+[data-density="compact"] .an-kv { font-size: 10.5px; padding: 3px 0; }
+[data-density="compact"] .an-v { font-size: 8.5px; }
+[data-density="compact"] .modal-body { padding: 10px 12px; }
+
+/* ---------- Sidebar cards, tightened ----------
+   The sidebar is the tall half of the top grid and therefore sets its height, so
+   trimming it here is what actually buys vertical space on screen. */
+[data-density="compact"] .decision-badge { font-size: 13px; padding: 3px 9px; }
+[data-density="compact"] .decision-badge-wrap { margin: 1px 0 3px; }
+[data-density="compact"] .decision-signal-row { gap: 4px; padding: 2px 0; }
+[data-density="compact"] .signal-sub-badge { font-size: 9px; padding: 1px 6px; }
+[data-density="compact"] .decision-confidence { font-size: 10.5px; padding: 2px 0; }
+[data-density="compact"] .decision-confidence > div { padding: 2px 0; }
+[data-density="compact"] .signal-strength { margin-top: 3px; }
+[data-density="compact"] .decision-reason { font-size: 10px; line-height: 1.35; margin-top: 3px; }
+[data-density="compact"] .scanner-meta { padding: 0 0 4px; gap: 6px; }
+[data-density="compact"] .scanner-updated-row { padding: 0 0 3px; }
+[data-density="compact"] .tf-scan-list { gap: 0; }
+[data-density="compact"] .tf-scan-list > * { padding-top: 1px; padding-bottom: 1px; }
+[data-density="compact"] .connect-bar { padding: 5px 8px; }
+
+/* ============================================================================
+   THE CHART COLUMN FILLS ITS ROW (no void under the chart)
+   ----------------------------------------------------------------------------
+   .chart-section and .sidebar are grid siblings, so both stretch to whichever
+   is taller. Measured: the sidebar (signal 336 + scanner 295 + connect 43 +
+   gaps) is ~690px while the chart + TDI pane only reach ~435px — leaving a
+   255px hole under the chart. Making the column a flex stack whose chart pane
+   GROWS means the gap cannot appear at any density or content length: the chart
+   absorbs the slack instead of the page showing a hole.
+   There is no feedback loop here (the trap I fell into before): the chart canvas
+   is sized BY JS from its container, it does not drive layout.
+   ============================================================================ */
+.chart-section { min-width: 0; display: flex; flex-direction: column; }
+.chart-panel {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+#chartContainer {
+    height: auto;
+    flex: 1 1 auto;
+    min-height: 200px;
+    position: relative;
+}
+#tradingChart { height: 100%; }
+.rsi-pane { flex: 0 0 auto; }

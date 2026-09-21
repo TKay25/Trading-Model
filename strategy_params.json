@@ -1,6 +1,6 @@
 {
- "generated_at": 1789989596.3754604,
- "records": 79,
+ "generated_at": 1789991190.590805,
+ "records": 83,
  "groups": {
   "1HZ100V|15m": {
    "n": 1,
@@ -27,9 +27,9 @@
    "ev_pct": null
   },
   "1HZ10V|1m": {
-   "n": 10,
+   "n": 11,
    "multiplier": 400,
-   "avg_atr_pct": 0.02,
+   "avg_atr_pct": 0.0197,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
@@ -99,9 +99,9 @@
    "ev_pct": null
   },
   "1HZ75V|15m": {
-   "n": 1,
+   "n": 4,
    "multiplier": 50,
-   "avg_atr_pct": 0.5795,
+   "avg_atr_pct": 0.5661,
    "current": {
     "sl_atr_k": 1.5,
     "tp_atr_k": 6.0
